@@ -4,6 +4,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from cinema_digest.formatter import (
+    _compact_logline,
     _format_booking_link,
     _format_scores,
     _format_showtimes,
@@ -111,11 +112,29 @@ class TestCleanLogline:
         assert result == "A " * 99 + "A"
 
 
+class TestCompactLogline:
+    def test_short_logline_unchanged(self):
+        assert _compact_logline("A short logline.") == "A short logline."
+
+    def test_none_returns_empty(self):
+        assert _compact_logline(None) == ""
+
+    def test_long_logline_trimmed_at_sentence(self):
+        long = "First sentence here. " + "X" * 200
+        result = _compact_logline(long)
+        assert result == "First sentence here."
+
+    def test_under_180_chars_unchanged(self):
+        text = "A decent logline that is well within the limit."
+        assert _compact_logline(text) == text
+
+
 class TestFormatFilmLine:
     def test_complete_film(self):
         film = Film(
             title="Test Film",
             logline="A test film about testing.",
+            director="Jane Director",
             screenings=[
                 Screening(
                     cinema="Clapham",
@@ -126,7 +145,8 @@ class TestFormatFilmLine:
             scores=Scores(metacritic=83, imdb=7.4, rotten_tomatoes=91),
         )
         result = format_film_line(film)
-        assert result.startswith("- **Test Film**")
+        assert "Test Film" in result
+        assert "dir. Jane Director" in result
         assert "83 / 7.4 / 91%" in result
         assert "Clapham: Tue 18:10" in result
         assert "[Book at Clapham](https://example.com/book)" in result
@@ -220,6 +240,7 @@ class TestFormatDigestHtml:
         films = [
             Film(
                 title="Test Film",
+                director="Test Director",
                 screenings=[
                     Screening(
                         cinema="Clapham",
@@ -233,7 +254,10 @@ class TestFormatDigestHtml:
         result = format_digest_html(films, now=now)
         assert "Picturehouse" in result
         assert "#E2124D" in result
-        assert "HIGHLY RATED" in result
+        # Star emoji should appear for highlighted films
+        assert "&#11088;" in result
+        # Director should appear
+        assert "Test Director" in result
 
     def test_html_empty_films(self):
         now = datetime(2026, 3, 11, 10, 0, tzinfo=LONDON_TZ)

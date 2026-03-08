@@ -170,9 +170,17 @@ def enrich_film(
         )
 
     film.scores = _parse_scores(data)
+
+    # Grab director
+    director = data.get("Director")
+    if director and director != "N/A":
+        film.director = director
+
+    # Prefer OMDb short plot when the scraped logline is long
     logline_from_omdb = data.get("Plot")
-    if logline_from_omdb and logline_from_omdb != "N/A" and not film.logline:
-        film.logline = logline_from_omdb
+    if logline_from_omdb and logline_from_omdb != "N/A":
+        if not film.logline or len(film.logline) > 200:
+            film.logline = logline_from_omdb
 
 
 def enrich_films(

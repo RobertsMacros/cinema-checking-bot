@@ -104,12 +104,16 @@ def _booking_info(screenings: list[Screening]) -> tuple[str, str]:
 
 def format_film_line(film: Film) -> str:
     """Format a single film as a bullet line."""
-    logline = _clean_logline(film.logline)
+    logline = _compact_logline(film.logline)
     scores = _format_scores(film.scores)
     showtimes = _format_showtimes(film.screenings)
     booking = _format_booking_link(film.screenings)
 
-    parts = [f"- **{film.title}**"]
+    title_parts = [film.title]
+    if film.director:
+        title_parts.append(f"dir. {film.director}")
+
+    parts = [f"- **{' — '.join(title_parts)}**"]
     if logline:
         parts.append(logline)
     parts.append(scores)
@@ -176,44 +180,77 @@ def _format_showtimes_html(screenings: list[Screening]) -> str:
     return "<br>".join(parts)
 
 
+def _compact_logline(logline: str | None) -> str:
+    """Return a logline suitable for ~2 lines of display.
+
+    Prefers keeping the text intact if it's short enough.  For longer
+    loglines we trim to the last full sentence that fits within ~180
+    characters so it reads naturally rather than being cut mid-sentence.
+    """
+    text = _clean_logline(logline)
+    if not text or len(text) <= 180:
+        return text
+    # Try to break at a sentence boundary within 180 chars
+    truncated = text[:180]
+    for end in (". ", "! ", "? "):
+        idx = truncated.rfind(end)
+        if idx >= 10:
+            return truncated[: idx + 1]
+    return truncated.rsplit(" ", 1)[0] + "\u2026"
+
+
+def _format_showtimes_inline_html(screenings: list[Screening]) -> str:
+    """Compact inline showtimes: 'Clapham: Tue 18:10; Ritzy: Fri 19:00'."""
+    by_cinema: dict[str, list[Screening]] = {}
+    for s in screenings:
+        by_cinema.setdefault(s.cinema, []).append(s)
+
+    parts = []
+    for cinema in sorted(by_cinema):
+        times = []
+        for s in sorted(by_cinema[cinema], key=lambda x: x.date):
+            times.append(f'{s.date.strftime("%a")}&nbsp;{s.date.strftime("%H:%M")}')
+        parts.append(f'<strong style="color:{PH_WHITE};">{_esc(cinema)}</strong>:&nbsp;{", ".join(times)}')
+
+    return " &middot; ".join(parts)
+
+
 def _film_row_html(film: Film) -> str:
     highlighted = is_highlighted(film.scores)
 
     row_bg = DARK_CARD_HL if highlighted else DARK_CARD
-    border_left = f"4px solid {PH_PINK}" if highlighted else "4px solid transparent"
 
-    badge = ""
-    stars = ""
-    if highlighted:
-        stars = "\u2b50 "
-        badge = (
-            f'&nbsp;<span style="display:inline-block;background:{PH_PINK};'
-            f"color:{PH_WHITE};font-size:10px;font-weight:bold;padding:2px 7px;"
-            f'border-radius:3px;vertical-align:middle;letter-spacing:0.5px;">'
-            f"HIGHLY RATED</span>"
-        )
-
-    logline = _esc(_clean_logline(film.logline))
+    logline = _esc(_compact_logline(film.logline))
     scores = _format_scores_html(film.scores)
-    showtimes = _format_showtimes_html(film.screenings)
+    showtimes = _format_showtimes_inline_html(film.screenings)
     book_cinema, book_url = _booking_info(film.screenings)
 
-    title_style = f"font-size:16px;font-weight:bold;color:{PH_WHITE};"
+    # Star column content
+    star_cell = f'<span style="font-size:16px;">&#11088;</span>' if highlighted else ""
 
-    return f"""<tr>
-<td style="padding:16px 20px;border-bottom:1px solid {DARK_BORDER};background:{row_bg};border-left:{border_left};">
-  <div style="margin-bottom:6px;">
-    <span style="{title_style}">{stars}{_esc(film.title)}</span>{badge}
-  </div>
-  <div style="font-size:13px;color:{DARK_TEXT_MUTED};margin-bottom:8px;line-height:1.5;">{logline}</div>
-  <div style="font-size:13px;color:{DARK_TEXT};margin-bottom:4px;">
-    <div style="color:{DARK_TEXT_DIM};font-size:11px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;">Scores (MC / IMDb / RT)</div>
-    <div style="font-weight:bold;color:{DARK_TEXT};">{scores}</div>
-  </div>
-  <div style="margin-top:8px;">
-    <a href="{_esc(book_url)}" style="display:inline-block;background:{PH_PINK};color:{PH_WHITE};text-decoration:none;padding:8px 16px;border-radius:4px;font-size:12px;font-weight:bold;">Book at {_esc(book_cinema)}</a>
-  </div>
-  <div style="margin-top:8px;font-size:12px;color:{DARK_TEXT_MUTED};line-height:1.6;">{showtimes}</div>
+    # Director + year metadata line
+    meta_parts: list[str] = []
+    if film.director:
+        meta_parts.append(_esc(film.director))
+    if film.year:
+        meta_parts.append(str(film.year))
+    if film.duration:
+        meta_parts.append(_esc(film.duration))
+    meta_line = " &middot; ".join(meta_parts)
+
+    return f"""<tr style="background:{row_bg};">
+<td style="padding:8px 4px 8px 8px;border-bottom:1px solid {DARK_BORDER};vertical-align:top;width:28px;text-align:center;">{star_cell}</td>
+<td style="padding:8px 6px;border-bottom:1px solid {DARK_BORDER};vertical-align:top;">
+  <div style="font-size:14px;font-weight:bold;color:{PH_WHITE};line-height:1.3;">{_esc(film.title)}</div>
+  <div style="font-size:11px;color:{DARK_TEXT_DIM};margin-top:2px;">{meta_line}</div>
+  <div style="font-size:12px;color:{DARK_TEXT_MUTED};margin-top:3px;line-height:1.4;">{logline}</div>
+</td>
+<td style="padding:8px 6px;border-bottom:1px solid {DARK_BORDER};vertical-align:top;white-space:nowrap;">
+  <div style="font-size:12px;font-weight:bold;color:{DARK_TEXT};">{scores}</div>
+</td>
+<td style="padding:8px 8px 8px 6px;border-bottom:1px solid {DARK_BORDER};vertical-align:top;">
+  <div style="font-size:11px;color:{DARK_TEXT_MUTED};line-height:1.4;">{showtimes}</div>
+  <a href="{_esc(book_url)}" style="display:inline-block;background:{PH_PINK};color:{PH_WHITE};text-decoration:none;padding:4px 10px;border-radius:3px;font-size:11px;font-weight:bold;margin-top:4px;">Book</a>
 </td>
 </tr>"""
 
@@ -230,7 +267,7 @@ def format_digest_html(films: list[Film], now: datetime | None = None) -> str:
         film_rows = "\n".join(_film_row_html(f) for f in sorted_films)
     else:
         film_rows = (
-            f'<tr><td style="padding:30px;text-align:center;color:{DARK_TEXT_MUTED};'
+            f'<tr><td colspan="4" style="padding:30px;text-align:center;color:{DARK_TEXT_MUTED};'
             f'background:{DARK_CARD};font-size:14px;">No qualifying screenings found for this week.</td></tr>'
         )
 
@@ -238,10 +275,8 @@ def format_digest_html(films: list[Film], now: datetime | None = None) -> str:
     legend = ""
     if highlighted_count > 0:
         legend = f"""<tr>
-<td style="padding:10px 20px;font-size:11px;color:{DARK_TEXT_MUTED};background:{DARK_CARD};">
-  &#11088;
-  <span style="display:inline-block;background:{PH_PINK};color:{PH_WHITE};font-size:9px;font-weight:bold;padding:1px 5px;border-radius:2px;vertical-align:middle;">HIGHLY RATED</span>
-  &nbsp;= Metacritic &ge; 70, IMDb &ge; 7.0, or Rotten Tomatoes &ge; 80%
+<td colspan="4" style="padding:6px 8px;font-size:11px;color:{DARK_TEXT_MUTED};background:{DARK_CARD};">
+  &#11088; = Metacritic &ge; 70, IMDb &ge; 7.0, or Rotten Tomatoes &ge; 80%
 </td>
 </tr>"""
 
@@ -278,7 +313,11 @@ def format_digest_html(films: list[Film], now: datetime | None = None) -> str:
 {legend}
 
 <!-- Films -->
+<tr><td colspan="1" style="padding:0;">
+<table cellpadding="0" cellspacing="0" border="0" role="presentation" style="width:100%;">
 {film_rows}
+</table>
+</td></tr>
 
 <!-- Footer -->
 <tr><td style="background:{DARK_BG};padding:20px;text-align:center;">
