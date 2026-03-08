@@ -109,6 +109,19 @@ def fetch_omdb(
     return response.json()
 
 
+def _apply_metadata(film: Film, data: dict) -> None:
+    """Apply director and logline from OMDb data to a film."""
+    director = data.get("Director")
+    if director and director != "N/A" and not film.director:
+        film.director = director
+
+    logline_from_omdb = data.get("Plot")
+    if logline_from_omdb and logline_from_omdb != "N/A":
+        # Always prefer OMDb plot when it's shorter than scraped logline
+        if not film.logline or len(logline_from_omdb) < len(film.logline):
+            film.logline = logline_from_omdb
+
+
 def enrich_film(
     film: Film,
     api_key: str,
@@ -128,6 +141,7 @@ def enrich_film(
     if cached is not None:
         if cached.get("Response") == "True":
             film.scores = _parse_scores(cached)
+            _apply_metadata(film, cached)
             logger.debug("Cache hit for %r", film.title)
         else:
             film.scores = Scores()
@@ -170,22 +184,64 @@ def enrich_film(
         )
 
     film.scores = _parse_scores(data)
+    _apply_metadata(film, data)
 
-    # Grab director
-    director = data.get("Director")
-    if director and director != "N/A":
-        film.director = director
 
-    # Prefer OMDb short plot when the scraped logline is long
-    logline_from_omdb = data.get("Plot")
-    if logline_from_omdb and logline_from_omdb != "N/A":
-        if not film.logline or len(film.logline) > 200:
-            film.logline = logline_from_omdb
+TMDB_API_URL = "https://api.themoviedb.org/3"
+
+
+def _fetch_tmdb(
+    title: str,
+    year: int | None,
+    api_key: str,
+    session: requests.Session,
+) -> dict | None:
+    """Search TMDB for a film and return its details, or None."""
+    params: dict[str, str] = {"api_key": api_key, "query": title}
+    if year:
+        params["year"] = str(year)
+
+    resp = session.get(f"{TMDB_API_URL}/search/movie", params=params, timeout=15)
+    resp.raise_for_status()
+    results = resp.json().get("results", [])
+    if not results:
+        if year:
+            # Retry without year
+            params.pop("year")
+            resp = session.get(f"{TMDB_API_URL}/search/movie", params=params, timeout=15)
+            resp.raise_for_status()
+            results = resp.json().get("results", [])
+        if not results:
+            return None
+
+    # Pick the best match by title similarity
+    best = max(results[:5], key=lambda r: _title_similarity(title, r.get("title", "")))
+    sim = _title_similarity(title, best.get("title", ""))
+    if sim < 0.6:
+        logger.info("TMDB: no good match for %r (best=%r, sim=%.2f)", title, best.get("title"), sim)
+        return None
+
+    return best
+
+
+def _apply_tmdb_data(film: Film, data: dict) -> None:
+    """Apply TMDB data as fallback for missing scores/metadata."""
+    vote = data.get("vote_average")
+    vote_count = data.get("vote_count", 0)
+    if vote and vote_count >= 10 and film.scores is not None:
+        if film.scores.imdb is None:
+            film.scores.imdb = round(vote, 1)
+            logger.debug("TMDB: filled IMDb-style score %.1f for %r", vote, film.title)
+
+    overview = data.get("overview")
+    if overview and (not film.logline or len(overview) < len(film.logline)):
+        film.logline = overview
 
 
 def enrich_films(
     films: list[Film],
     api_key: str,
+    tmdb_api_key: str = "",
     session: requests.Session | None = None,
 ) -> None:
     """Enrich all films with scores. Failures are logged but do not propagate."""
@@ -202,3 +258,25 @@ def enrich_films(
         except Exception:
             logger.exception("Failed to enrich %r", film.title)
             film.scores = Scores()
+
+    # TMDB fallback pass for films still missing scores
+    if not tmdb_api_key:
+        return
+
+    for film in films:
+        scores = film.scores
+        has_any = scores and (
+            scores.metacritic is not None
+            or scores.imdb is not None
+            or scores.rotten_tomatoes is not None
+        )
+        if has_any:
+            continue
+        try:
+            clean = _clean_title_for_search(film.title)
+            tmdb_data = _fetch_tmdb(clean, film.year, tmdb_api_key, s)
+            if tmdb_data:
+                _apply_tmdb_data(film, tmdb_data)
+                logger.info("TMDB fallback enriched %r", film.title)
+        except Exception:
+            logger.exception("TMDB fallback failed for %r", film.title)

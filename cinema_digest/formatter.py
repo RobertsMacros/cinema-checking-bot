@@ -29,7 +29,12 @@ DARK_TEXT_DIM = "#666666"
 # Font stack
 FONT_STACK = "Georgia,'Times New Roman',Times,serif"
 
-PH_LOGO_URL = "https://www.picturehouses.com/graphics/picturehouse-og.jpg"
+PH_LOGO_URL = "https://s3picturehouses.s3.eu-central-1.amazonaws.com/settings/ph1563896910.png"
+
+# Score source icons (Google favicon API — reliable for email)
+ICON_MC = "https://www.google.com/s2/favicons?domain=metacritic.com&sz=32"
+ICON_IMDB = "https://www.google.com/s2/favicons?domain=imdb.com&sz=32"
+ICON_RT = "https://www.google.com/s2/favicons?domain=rottentomatoes.com&sz=32"
 
 
 def is_highlighted(scores: Scores | None) -> bool:
@@ -151,18 +156,29 @@ def _esc(text: str) -> str:
     return html_module.escape(text)
 
 
+def _score_icon(url: str) -> str:
+    return f'<img src="{url}" width="14" height="14" alt="" style="vertical-align:middle;margin-right:2px;">'
+
+
 def _format_scores_html(scores: Scores | None) -> str:
-    na = f'<span style="color:{DARK_TEXT_DIM};">N/A</span>'
+    na = f'<span style="color:{DARK_TEXT_DIM};">—</span>'
+
+    def _val(v, fmt):
+        return fmt(v) if v is not None else na
+
     if scores is None:
-        return f"{na} / {na} / {na}"
-    parts = []
-    for val, fmt in [
-        (scores.metacritic, lambda v: str(v)),
-        (scores.imdb, lambda v: str(v)),
-        (scores.rotten_tomatoes, lambda v: f"{v}%"),
-    ]:
-        parts.append(fmt(val) if val is not None else na)
-    return " / ".join(parts)
+        mc_val = imdb_val = rt_val = na
+    else:
+        mc_val = _val(scores.metacritic, str)
+        imdb_val = _val(scores.imdb, str)
+        rt_val = _val(scores.rotten_tomatoes, lambda v: f"{v}%")
+
+    parts = [
+        f'{_score_icon(ICON_MC)}{mc_val}',
+        f'{_score_icon(ICON_IMDB)}{imdb_val}',
+        f'{_score_icon(ICON_RT)}{rt_val}',
+    ]
+    return '<br>'.join(parts)
 
 
 def _format_showtimes_html(screenings: list[Screening]) -> str:
@@ -185,7 +201,8 @@ def _compact_logline(logline: str | None) -> str:
 
     Prefers keeping the text intact if it's short enough.  For longer
     loglines we trim to the last full sentence that fits within ~180
-    characters so it reads naturally rather than being cut mid-sentence.
+    characters.  Never cuts off mid-sentence with an ellipsis — if no
+    good sentence break is found, the full text is returned.
     """
     text = _clean_logline(logline)
     if not text or len(text) <= 180:
@@ -196,7 +213,11 @@ def _compact_logline(logline: str | None) -> str:
         idx = truncated.rfind(end)
         if idx >= 10:
             return truncated[: idx + 1]
-    return truncated.rsplit(" ", 1)[0] + "\u2026"
+    # Check for a sentence ending right at the boundary (period at end)
+    if truncated.endswith((".", "!", "?")):
+        return truncated
+    # No good break found — return full text rather than cutting off
+    return text
 
 
 def _format_showtimes_inline_html(screenings: list[Screening]) -> str:
@@ -322,7 +343,7 @@ def format_digest_html(films: list[Film], now: datetime | None = None) -> str:
 <!-- Footer -->
 <tr><td style="background:{DARK_BG};padding:20px;text-align:center;">
   <div style="color:{DARK_TEXT_DIM};font-size:11px;line-height:1.6;">
-    Scores: Metacritic / IMDb / Rotten Tomatoes<br>
+    Scores: {_score_icon(ICON_MC)}Metacritic &middot; {_score_icon(ICON_IMDB)}IMDb &middot; {_score_icon(ICON_RT)}Rotten Tomatoes<br>
     Listings from <a href="https://film.datathistle.com/" style="color:{PH_PINK};text-decoration:none;">Data Thistle</a>
     &middot; Scores from <a href="https://www.omdbapi.com/" style="color:{PH_PINK};text-decoration:none;">OMDb</a>
   </div>

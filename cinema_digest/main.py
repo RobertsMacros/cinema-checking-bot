@@ -65,7 +65,7 @@ def main() -> None:
 
     # 3. Enrich (even if empty, this is a no-op)
     if filtered:
-        enrich_films(filtered, config.omdb_api_key)
+        enrich_films(filtered, config.omdb_api_key, tmdb_api_key=config.tmdb_api_key)
 
     # 4. Format
     body = format_digest(filtered)

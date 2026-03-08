@@ -23,6 +23,7 @@ class Config:
     """Application configuration loaded from environment."""
 
     omdb_api_key: str
+    tmdb_api_key: str
     smtp_host: str
     smtp_port: int
     smtp_user: str
@@ -36,6 +37,7 @@ class Config:
         load_dotenv()
         return cls(
             omdb_api_key=os.environ.get("OMDB_API_KEY", ""),
+            tmdb_api_key=os.environ.get("TMDB_API_KEY", ""),
             smtp_host=os.environ.get("SMTP_HOST", "smtp.gmail.com"),
             smtp_port=int(os.environ.get("SMTP_PORT", "587")),
             smtp_user=os.environ.get("SMTP_USER", ""),

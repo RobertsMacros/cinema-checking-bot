@@ -124,6 +124,13 @@ class TestCompactLogline:
         result = _compact_logline(long)
         assert result == "First sentence here."
 
+    def test_no_ellipsis_cutoff(self):
+        """If no sentence boundary found, return full text instead of cutting off."""
+        long = "A really long logline without any sentence breaks that just keeps going and going " * 3
+        result = _compact_logline(long)
+        assert "\u2026" not in result
+        assert result == _clean_logline(long)
+
     def test_under_180_chars_unchanged(self):
         text = "A decent logline that is well within the limit."
         assert _compact_logline(text) == text
