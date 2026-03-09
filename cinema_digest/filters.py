@@ -75,6 +75,8 @@ def filter_screenings(
             year=film.year,
             duration=film.duration,
             logline=film.logline,
+            director=film.director,
+            imdb_id=film.imdb_id,
             listing_url=film.listing_url,
             screenings=kept,
             scores=film.scores,

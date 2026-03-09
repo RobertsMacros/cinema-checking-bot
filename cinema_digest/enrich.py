@@ -111,10 +111,14 @@ def fetch_omdb(
 
 
 def _apply_metadata(film: Film, data: dict) -> None:
-    """Apply director and logline from OMDb data to a film."""
+    """Apply director, IMDB ID, and logline from OMDb data to a film."""
     director = data.get("Director")
     if director and director != "N/A" and not film.director:
         film.director = director
+
+    imdb_id = data.get("imdbID")
+    if imdb_id and not film.imdb_id:
+        film.imdb_id = imdb_id
 
     logline_from_omdb = data.get("Plot")
     if logline_from_omdb and logline_from_omdb != "N/A":

@@ -34,6 +34,7 @@ class Film:
     duration: str | None = None  # raw string like "2h 6min"
     logline: str | None = None
     director: str | None = None
+    imdb_id: str | None = None  # e.g. "tt1234567"
     listing_url: str | None = None  # Data Thistle listing page
     screenings: list[Screening] = field(default_factory=list)
     scores: Scores | None = None

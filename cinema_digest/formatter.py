@@ -221,19 +221,23 @@ def _compact_logline(logline: str | None) -> str:
 
 
 def _format_showtimes_inline_html(screenings: list[Screening]) -> str:
-    """Compact inline showtimes: 'Clapham: Tue 18:10; Ritzy: Fri 19:00'."""
+    """Compact inline showtimes with cinema names as booking links."""
     by_cinema: dict[str, list[Screening]] = {}
     for s in screenings:
         by_cinema.setdefault(s.cinema, []).append(s)
 
     parts = []
     for cinema in sorted(by_cinema):
+        sorted_screenings = sorted(by_cinema[cinema], key=lambda x: x.date)
+        # Link cinema name to its earliest booking URL
+        first_url = sorted_screenings[0].booking_url
         times = []
-        for s in sorted(by_cinema[cinema], key=lambda x: x.date):
+        for s in sorted_screenings:
             times.append(f'{s.date.strftime("%a")}&nbsp;{s.date.strftime("%H:%M")}')
-        parts.append(f'<strong style="color:{PH_WHITE};">{_esc(cinema)}</strong>:&nbsp;{", ".join(times)}')
+        cinema_link = f'<a href="{_esc(first_url)}" style="color:{PH_WHITE};font-weight:bold;text-decoration:underline;">{_esc(cinema)}</a>'
+        parts.append(f'{cinema_link}:&nbsp;{", ".join(times)}')
 
-    return " &middot; ".join(parts)
+    return "<br>".join(parts)
 
 
 def _film_row_html(film: Film) -> str:
@@ -244,10 +248,16 @@ def _film_row_html(film: Film) -> str:
     logline = _esc(_compact_logline(film.logline))
     scores = _format_scores_html(film.scores)
     showtimes = _format_showtimes_inline_html(film.screenings)
-    book_cinema, book_url = _booking_info(film.screenings)
 
     # Star column content
-    star_cell = f'<span style="font-size:16px;">&#11088;</span>' if highlighted else ""
+    star_cell = f'<span style="font-size:14px;">&#11088;</span>' if highlighted else ""
+
+    # Title — link to IMDB if we have the ID
+    title_esc = _esc(film.title)
+    if film.imdb_id:
+        title_html = f'<a href="https://www.imdb.com/title/{_esc(film.imdb_id)}/" style="color:{PH_WHITE};text-decoration:underline;">{title_esc}</a>'
+    else:
+        title_html = title_esc
 
     # Director + year metadata line
     meta_parts: list[str] = []
@@ -260,18 +270,17 @@ def _film_row_html(film: Film) -> str:
     meta_line = " &middot; ".join(meta_parts)
 
     return f"""<tr style="background:{row_bg};">
-<td style="padding:8px 4px 8px 8px;border-bottom:1px solid {DARK_BORDER};vertical-align:top;width:28px;text-align:center;">{star_cell}</td>
+<td style="padding:8px 4px 8px 8px;border-bottom:1px solid {DARK_BORDER};vertical-align:top;width:24px;text-align:center;">{star_cell}</td>
 <td style="padding:8px 6px;border-bottom:1px solid {DARK_BORDER};vertical-align:top;">
-  <div style="font-size:14px;font-weight:bold;color:{PH_WHITE};line-height:1.3;">{_esc(film.title)}</div>
-  <div style="font-size:11px;color:{DARK_TEXT_DIM};margin-top:2px;">{meta_line}</div>
+  <div style="font-size:13px;font-weight:bold;color:{PH_WHITE};line-height:1.3;">{title_html}</div>
+  <div style="font-size:12px;color:{DARK_TEXT_DIM};margin-top:2px;">{meta_line}</div>
   <div style="font-size:12px;color:{DARK_TEXT_MUTED};margin-top:3px;line-height:1.4;">{logline}</div>
 </td>
 <td style="padding:8px 6px;border-bottom:1px solid {DARK_BORDER};vertical-align:top;white-space:nowrap;">
-  <div style="font-size:12px;font-weight:bold;color:{DARK_TEXT};">{scores}</div>
+  <div style="font-size:12px;color:{DARK_TEXT};">{scores}</div>
 </td>
 <td style="padding:8px 8px 8px 6px;border-bottom:1px solid {DARK_BORDER};vertical-align:top;">
-  <div style="font-size:11px;color:{DARK_TEXT_MUTED};line-height:1.4;">{showtimes}</div>
-  <a href="{_esc(book_url)}" style="display:inline-block;background:{PH_PINK};color:{PH_WHITE};text-decoration:none;padding:4px 10px;border-radius:3px;font-size:11px;font-weight:bold;margin-top:4px;">Book</a>
+  <div style="font-size:12px;color:{DARK_TEXT_MUTED};line-height:1.5;">{showtimes}</div>
 </td>
 </tr>"""
 
