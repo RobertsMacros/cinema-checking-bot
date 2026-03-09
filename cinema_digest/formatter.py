@@ -31,6 +31,12 @@ FONT_STACK = "Georgia,'Times New Roman',Times,serif"
 
 PH_LOGO_URL = "https://s3picturehouses.s3.eu-central-1.amazonaws.com/settings/ph1563896910.png"
 
+# Stable cinema pages (won't 503 like deep ticketing links)
+CINEMA_URLS = {
+    "Clapham": "https://www.picturehouses.com/cinema/clapham-picturehouse",
+    "Ritzy": "https://www.picturehouses.com/cinema/ritzy-picturehouse",
+}
+
 # Score source icons (Google favicon API — reliable for email)
 ICON_MC = "https://www.google.com/s2/favicons?domain=metacritic.com&sz=32"
 ICON_IMDB = "https://www.google.com/s2/favicons?domain=imdb.com&sz=32"
@@ -161,23 +167,21 @@ def _score_icon(url: str) -> str:
 
 
 def _format_scores_html(scores: Scores | None) -> str:
-    na = f'<span style="color:{DARK_TEXT_DIM};">—</span>'
-
-    def _val(v, fmt):
-        return fmt(v) if v is not None else na
-
+    """Only show scores that actually exist — no dashes for missing ones."""
     if scores is None:
-        mc_val = imdb_val = rt_val = na
-    else:
-        mc_val = _val(scores.metacritic, str)
-        imdb_val = _val(scores.imdb, str)
-        rt_val = _val(scores.rotten_tomatoes, lambda v: f"{v}%")
+        return f'<span style="color:{DARK_TEXT_DIM};">No scores</span>'
 
-    parts = [
-        f'{_score_icon(ICON_MC)}{mc_val}',
-        f'{_score_icon(ICON_IMDB)}{imdb_val}',
-        f'{_score_icon(ICON_RT)}{rt_val}',
-    ]
+    parts = []
+    if scores.metacritic is not None:
+        parts.append(f'{_score_icon(ICON_MC)}{scores.metacritic}')
+    if scores.imdb is not None:
+        parts.append(f'{_score_icon(ICON_IMDB)}{scores.imdb}')
+    if scores.rotten_tomatoes is not None:
+        parts.append(f'{_score_icon(ICON_RT)}{scores.rotten_tomatoes}%')
+
+    if not parts:
+        return f'<span style="color:{DARK_TEXT_DIM};">No scores</span>'
+
     return '<br>'.join(parts)
 
 
@@ -221,7 +225,7 @@ def _compact_logline(logline: str | None) -> str:
 
 
 def _format_showtimes_inline_html(screenings: list[Screening]) -> str:
-    """Compact inline showtimes with cinema names as booking links."""
+    """Compact inline showtimes with cinema names linked to stable Picturehouse pages."""
     by_cinema: dict[str, list[Screening]] = {}
     for s in screenings:
         by_cinema.setdefault(s.cinema, []).append(s)
@@ -229,13 +233,15 @@ def _format_showtimes_inline_html(screenings: list[Screening]) -> str:
     parts = []
     for cinema in sorted(by_cinema):
         sorted_screenings = sorted(by_cinema[cinema], key=lambda x: x.date)
-        # Link cinema name to its earliest booking URL
-        first_url = sorted_screenings[0].booking_url
         times = []
         for s in sorted_screenings:
             times.append(f'{s.date.strftime("%a")}&nbsp;{s.date.strftime("%H:%M")}')
-        cinema_link = f'<a href="{_esc(first_url)}" style="color:{PH_WHITE};font-weight:bold;text-decoration:underline;">{_esc(cinema)}</a>'
-        parts.append(f'{cinema_link}:&nbsp;{", ".join(times)}')
+        cinema_url = CINEMA_URLS.get(cinema, "")
+        if cinema_url:
+            cinema_html = f'<a href="{_esc(cinema_url)}" style="color:{PH_WHITE};font-weight:bold;text-decoration:underline;">{_esc(cinema)}</a>'
+        else:
+            cinema_html = f'<strong style="color:{PH_WHITE};">{_esc(cinema)}</strong>'
+        parts.append(f'{cinema_html}:&nbsp;{", ".join(times)}')
 
     return "<br>".join(parts)
 
@@ -350,11 +356,15 @@ def format_digest_html(films: list[Film], now: datetime | None = None) -> str:
 </td></tr>
 
 <!-- Footer -->
-<tr><td style="background:{DARK_BG};padding:20px;text-align:center;">
-  <div style="color:{DARK_TEXT_DIM};font-size:11px;line-height:1.6;">
-    Scores: {_score_icon(ICON_MC)}Metacritic &middot; {_score_icon(ICON_IMDB)}IMDb &middot; {_score_icon(ICON_RT)}Rotten Tomatoes<br>
+<tr><td style="background:{DARK_BG};padding:24px 20px;text-align:center;border-top:1px solid {DARK_BORDER};">
+  <div style="color:{DARK_TEXT_DIM};font-size:12px;line-height:1.8;">
+    Scores: {_score_icon(ICON_MC)} Metacritic &middot; {_score_icon(ICON_IMDB)} IMDb &middot; {_score_icon(ICON_RT)} Rotten Tomatoes<br>
+    <a href="{CINEMA_URLS['Clapham']}" style="color:{PH_PINK};text-decoration:none;">Clapham Picturehouse</a>
+    &middot;
+    <a href="{CINEMA_URLS['Ritzy']}" style="color:{PH_PINK};text-decoration:none;">Ritzy Picturehouse</a><br>
     Listings from <a href="https://film.datathistle.com/" style="color:{PH_PINK};text-decoration:none;">Data Thistle</a>
-    &middot; Scores from <a href="https://www.omdbapi.com/" style="color:{PH_PINK};text-decoration:none;">OMDb</a>
+    &middot; Scores from <a href="https://www.omdbapi.com/" style="color:{PH_PINK};text-decoration:none;">OMDb</a><br>
+    <span style="color:{DARK_TEXT_DIM};font-size:11px;">Sent by Cinema Bot &middot; {_esc(date_str)}</span>
   </div>
 </td></tr>
 
