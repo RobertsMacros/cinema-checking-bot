@@ -37,4 +37,5 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
-        run: python -m cinema_digest.main
+        run: python -m cinema_digest.main -v
+        timeout-minutes: 10
