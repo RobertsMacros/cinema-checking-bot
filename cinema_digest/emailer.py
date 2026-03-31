@@ -63,18 +63,22 @@ def send_digest(
 
     logger.info("Sending digest to %s via %s:%d", to_addrs, smtp_host, smtp_port)
 
+    sent = False
+
+    # Try SSL on port 465 first (works on GitHub Actions and most CI)
     try:
-        # Try STARTTLS on port 587 first
-        with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
+        logger.info("Trying SMTP_SSL on port 465")
+        with smtplib.SMTP_SSL(smtp_host, 465, timeout=30) as server:
             server.login(smtp_user, smtp_password)
             server.sendmail(from_addr, to_addrs, msg.as_string())
-    except (smtplib.SMTPServerDisconnected, smtplib.SMTPConnectError, OSError):
-        # Fallback: SSL on port 465 (some CI environments block port 587)
-        logger.info("Port %d failed, falling back to SSL on port 465", smtp_port)
-        with smtplib.SMTP_SSL(smtp_host, 465, timeout=30) as server:
+        sent = True
+    except Exception as e:
+        logger.info("SSL port 465 failed (%s), trying STARTTLS on port %d", e, smtp_port)
+
+    # Fallback: STARTTLS on configured port (works locally)
+    if not sent:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
+            server.starttls()
             server.login(smtp_user, smtp_password)
             server.sendmail(from_addr, to_addrs, msg.as_string())
 
