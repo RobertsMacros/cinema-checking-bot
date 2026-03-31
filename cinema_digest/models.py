@@ -23,6 +23,9 @@ class Scores:
     metacritic: int | None = None  # 0-100
     imdb: float | None = None  # 0.0-10.0
     rotten_tomatoes: int | None = None  # 0-100
+    imdb_id: str | None = None  # e.g. "tt1234567"
+    mc_slug: str | None = None  # e.g. "sinners"
+    rt_slug: str | None = None  # e.g. "/m/the_great_gatsby_2013"
 
 
 @dataclass
@@ -35,5 +38,6 @@ class Film:
     logline: str | None = None
     director: str | None = None
     listing_url: str | None = None  # Data Thistle listing page
+    ph_url: str | None = None  # Picturehouse movie-details page
     screenings: list[Screening] = field(default_factory=list)
     scores: Scores | None = None

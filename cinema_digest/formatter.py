@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import html as html_module
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from cinema_digest.config import CINEMA_URLS
 from cinema_digest.models import Film, Scores, Screening
 
 LONDON_TZ = ZoneInfo("Europe/London")
@@ -29,7 +31,7 @@ DARK_TEXT_DIM = "#666666"
 # Font stack
 FONT_STACK = "Georgia,'Times New Roman',Times,serif"
 
-PH_LOGO_URL = "https://s3picturehouses.s3.eu-central-1.amazonaws.com/settings/ph1563896910.png"
+PH_LOGO_URL = "https://s3picturehouses.s3.eu-central-1.amazonaws.com/settings/ph1551963779.png"
 
 # Score source icons (Google favicon API — reliable for email)
 ICON_MC = "https://www.google.com/s2/favicons?domain=metacritic.com&sz=32"
@@ -38,14 +40,12 @@ ICON_RT = "https://www.google.com/s2/favicons?domain=rottentomatoes.com&sz=32"
 
 
 def is_highlighted(scores: Scores | None) -> bool:
-    """A film is highlighted if Metacritic >= 70, IMDb >= 7.0, or RT >= 80%."""
+    """A film is highlighted if Metacritic >= 76 or IMDb >= 7.7."""
     if scores is None:
         return False
-    if scores.metacritic is not None and scores.metacritic >= 70:
+    if scores.metacritic is not None and scores.metacritic >= 76:
         return True
-    if scores.imdb is not None and scores.imdb >= 7.0:
-        return True
-    if scores.rotten_tomatoes is not None and scores.rotten_tomatoes >= 80:
+    if scores.imdb is not None and scores.imdb >= 7.7:
         return True
     return False
 
@@ -81,26 +81,20 @@ def _format_showtimes(screenings: list[Screening]) -> str:
 
     cinema_parts = []
     for cinema in sorted(by_cinema):
-        times = []
+        by_day: dict[str, list[str]] = {}
         for s in sorted(by_cinema[cinema], key=lambda x: x.date):
-            day_abbr = s.date.strftime("%a")
-            time_str = s.date.strftime("%H:%M")
-            times.append(f"{day_abbr} {time_str}")
-        cinema_parts.append(f"{cinema}: {', '.join(times)}")
+            day = s.date.strftime("%a")
+            by_day.setdefault(day, []).append(s.date.strftime("%H:%M"))
+        day_parts = [f"{day} {', '.join(times)}" for day, times in by_day.items()]
+        cinema_parts.append(f"{cinema}: {'; '.join(day_parts)}")
 
-    return "; ".join(cinema_parts)
-
-
-def _format_booking_link(screenings: list[Screening]) -> str:
-    """Return a markdown link to the earliest available booking."""
-    first = min(screenings, key=lambda s: s.date)
-    return f"[Book at {first.cinema}]({first.booking_url})"
+    return " | ".join(cinema_parts)
 
 
-def _booking_info(screenings: list[Screening]) -> tuple[str, str]:
-    """Return (cinema_name, url) for the earliest booking."""
-    first = min(screenings, key=lambda s: s.date)
-    return first.cinema, first.booking_url
+def _format_booking_link_plain(film: Film) -> str:
+    """Return a markdown booking link for plain text."""
+    url = _film_booking_url(film) if hasattr(film, 'ph_url') else "https://www.picturehouses.com"
+    return f"[Book]({url})"
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +106,7 @@ def format_film_line(film: Film) -> str:
     logline = _compact_logline(film.logline)
     scores = _format_scores(film.scores)
     showtimes = _format_showtimes(film.screenings)
-    booking = _format_booking_link(film.screenings)
+    booking = _format_booking_link_plain(film)
 
     title_parts = [film.title]
     if film.director:
@@ -128,17 +122,23 @@ def format_film_line(film: Film) -> str:
     return " - ".join(parts)
 
 
+def _sort_key_mc_desc(film: Film) -> tuple:
+    """Sort key: Metacritic descending, then title. Films without MC go last."""
+    mc = film.scores.metacritic if film.scores and film.scores.metacritic is not None else -1
+    return (-mc, film.title.lower())
+
+
 def format_digest(films: list[Film], now: datetime | None = None) -> str:
     """Format the complete plain-text digest body."""
     if now is None:
         now = datetime.now(LONDON_TZ)
 
-    sorted_films = sorted(films, key=lambda f: f.title.lower())
+    sorted_films = sorted(films, key=_sort_key_mc_desc)
     lines = [format_film_line(f) for f in sorted_films]
 
     date_str = now.strftime("%A %d %B %Y")
     header = f"Cinema Digest - {date_str}\n"
-    header += "Clapham Picturehouse and Ritzy Picturehouse (Brixton)\n"
+    header += "Clapham Picturehouse & Ritzy\n"
     header += "Showtimes for the next 7 days\n"
     header += "-" * 50 + "\n\n"
 
@@ -160,6 +160,13 @@ def _score_icon(url: str) -> str:
     return f'<img src="{url}" width="14" height="14" alt="" style="vertical-align:middle;margin-right:2px;">'
 
 
+def _score_link(icon_url: str, label: str, link_url: str | None) -> str:
+    icon = _score_icon(icon_url)
+    if link_url:
+        return f'<a href="{_esc(link_url)}" style="color:{DARK_TEXT};text-decoration:none;">{icon}{label}</a>'
+    return f'{icon}{label}'
+
+
 def _format_scores_html(scores: Scores | None) -> str:
     na = f'<span style="color:{DARK_TEXT_DIM};">—</span>'
 
@@ -168,17 +175,22 @@ def _format_scores_html(scores: Scores | None) -> str:
 
     if scores is None:
         mc_val = imdb_val = rt_val = na
+        mc_url = imdb_url = rt_url = None
     else:
         mc_val = _val(scores.metacritic, str)
         imdb_val = _val(scores.imdb, str)
         rt_val = _val(scores.rotten_tomatoes, lambda v: f"{v}%")
+        # Build clickable links to the score source pages
+        imdb_url = f"https://www.imdb.com/title/{scores.imdb_id}/" if scores.imdb_id else None
+        mc_url = f"https://www.metacritic.com/movie/{scores.mc_slug}/" if scores.mc_slug else None
+        rt_url = f"https://www.rottentomatoes.com{scores.rt_slug}" if scores.rt_slug else None
 
     parts = [
-        f'{_score_icon(ICON_MC)}{mc_val}',
-        f'{_score_icon(ICON_IMDB)}{imdb_val}',
-        f'{_score_icon(ICON_RT)}{rt_val}',
+        _score_link(ICON_MC, mc_val, mc_url),
+        _score_link(ICON_IMDB, imdb_val, imdb_url),
+        _score_link(ICON_RT, rt_val, rt_url),
     ]
-    return '<br>'.join(parts)
+    return ' &nbsp; '.join(parts)
 
 
 def _format_showtimes_html(screenings: list[Screening]) -> str:
@@ -200,54 +212,98 @@ def _compact_logline(logline: str | None) -> str:
     """Return a logline suitable for ~2 lines of display.
 
     Prefers keeping the text intact if it's short enough.  For longer
-    loglines we trim to the last full sentence that fits within ~180
-    characters.  Never cuts off mid-sentence with an ellipsis — if no
-    good sentence break is found, the full text is returned.
+    loglines we find the first full sentence break (". " followed by
+    an uppercase letter) and cut there.
     """
     text = _clean_logline(logline)
     if not text or len(text) <= 180:
         return text
-    # Try to break at a sentence boundary within 180 chars
+    # Find a sentence break within 120 chars
+    for m in re.finditer(r'[.!?]\s+(?=[A-Z])', text):
+        if m.start() <= 180:
+            return text[:m.start() + 1]
+        break  # first break is past limit
+    # Try comma or semicolon break for a natural pause
     truncated = text[:180]
-    for end in (". ", "! ", "? "):
-        idx = truncated.rfind(end)
-        if idx >= 10:
-            return truncated[: idx + 1]
-    # Check for a sentence ending right at the boundary (period at end)
-    if truncated.endswith((".", "!", "?")):
-        return truncated
-    # No good break found — return full text rather than cutting off
-    return text
+    for sep in (", and ", "; ", ", who ", ", where ", ", exploring ", ", facing "):
+        idx = truncated.rfind(sep)
+        if idx >= 40:
+            return text[:idx] + "."
+    # Last resort: break at last comma
+    idx = truncated.rfind(", ")
+    if idx >= 40:
+        return text[:idx] + "."
+    # Break at last space
+    return text[:177].rsplit(" ", 1)[0] + "."
 
 
 def _format_showtimes_inline_html(screenings: list[Screening]) -> str:
-    """Compact inline showtimes: 'Clapham: Tue 18:10; Ritzy: Fri 19:00'."""
+    """Compact inline showtimes grouped by day: 'Clapham: Tue 18:10; Sun 14:50, 17:20'."""
     by_cinema: dict[str, list[Screening]] = {}
     for s in screenings:
         by_cinema.setdefault(s.cinema, []).append(s)
 
     parts = []
     for cinema in sorted(by_cinema):
-        times = []
+        # Group by day abbreviation
+        by_day: dict[str, list[str]] = {}
         for s in sorted(by_cinema[cinema], key=lambda x: x.date):
-            times.append(f'{s.date.strftime("%a")}&nbsp;{s.date.strftime("%H:%M")}')
-        parts.append(f'<strong style="color:{PH_WHITE};">{_esc(cinema)}</strong>:&nbsp;{", ".join(times)}')
+            day = s.date.strftime("%a")
+            by_day.setdefault(day, []).append(s.date.strftime("%H:%M"))
+        day_parts = []
+        for day, times in by_day.items():
+            day_parts.append(f'{day}&nbsp;{", ".join(times)}')
+        parts.append(f'<strong style="color:{PH_WHITE};">{_esc(cinema)}</strong>:&nbsp;{"; ".join(day_parts)}')
 
-    return " &middot; ".join(parts)
+    return "<br>".join(parts)
 
 
-def _film_row_html(film: Film) -> str:
+def _film_booking_url(film: Film) -> str:
+    """Return the best booking URL: PH film page > PH cinema page > fallback."""
+    if film.ph_url:
+        return film.ph_url
+    first = min(film.screenings, key=lambda s: s.date)
+    return CINEMA_URLS.get(first.cinema, "https://www.picturehouses.com")
+
+
+def _book_buttons_html(film: Film, on_pink: bool = False) -> str:
+    """Build booking button(s). Single 'Book' if one cinema, 'Clapham'/'Ritzy' if both."""
+    cinemas = sorted(set(s.cinema for s in film.screenings))
+    bg = PH_WHITE if on_pink else PH_PINK
+    fg = PH_PINK if on_pink else PH_WHITE
+    btn = (
+        'display:inline-block;background:{bg};color:{fg};text-decoration:none;'
+        'padding:4px 10px;border-radius:3px;font-size:12px;font-weight:bold;margin-right:4px;'
+    ).format(bg=bg, fg=fg)
+
+    if len(cinemas) <= 1:
+        url = _film_booking_url(film)
+        return f'<a href="{_esc(url)}" style="{btn}">Book</a>'
+
+    # Both cinemas — one button each
+    buttons = []
+    for cinema in cinemas:
+        url = _film_booking_url(film)
+        # Use cinema-specific PH URL if we can build one
+        cinema_url = CINEMA_URLS.get(cinema, url)
+        if film.ph_url:
+            # Swap the cinema code in the ph_url
+            from cinema_digest.config import CINEMA_CODES
+            code = CINEMA_CODES.get(cinema, "000")
+            cinema_url = re.sub(r'/movie-details/\d+/', f'/movie-details/{code}/', film.ph_url)
+        buttons.append(f'<a href="{_esc(cinema_url)}" style="{btn}">{_esc(cinema)}</a>')
+    return " ".join(buttons)
+
+
+def _film_row_html(film: Film, is_top: bool = False) -> str:
     highlighted = is_highlighted(film.scores)
-
-    row_bg = DARK_CARD_HL if highlighted else DARK_CARD
 
     logline = _esc(_compact_logline(film.logline))
     scores = _format_scores_html(film.scores)
     showtimes = _format_showtimes_inline_html(film.screenings)
-    book_cinema, book_url = _booking_info(film.screenings)
+    book_buttons = _book_buttons_html(film)
 
-    # Star column content
-    star_cell = f'<span style="font-size:16px;">&#11088;</span>' if highlighted else ""
+    star = " &#11088;" if highlighted else ""
 
     # Director + year metadata line
     meta_parts: list[str] = []
@@ -259,21 +315,29 @@ def _film_row_html(film: Film) -> str:
         meta_parts.append(_esc(film.duration))
     meta_line = " &middot; ".join(meta_parts)
 
-    return f"""<tr style="background:{row_bg};">
-<td style="padding:8px 4px 8px 8px;border-bottom:1px solid {DARK_BORDER};vertical-align:top;width:28px;text-align:center;">{star_cell}</td>
-<td style="padding:8px 6px;border-bottom:1px solid {DARK_BORDER};vertical-align:top;">
-  <div style="font-size:14px;font-weight:bold;color:{PH_WHITE};line-height:1.3;">{_esc(film.title)}</div>
-  <div style="font-size:11px;color:{DARK_TEXT_DIM};margin-top:2px;">{meta_line}</div>
-  <div style="font-size:12px;color:{DARK_TEXT_MUTED};margin-top:3px;line-height:1.4;">{logline}</div>
+    card_bg = DARK_CARD
+    radius = "12px"
+    title_color = PH_WHITE
+    meta_color = DARK_TEXT_DIM
+    text_color = DARK_TEXT_MUTED
+
+    return f"""<tr><td colspan="4" style="padding:0 0 8px 0;">
+<table cellpadding="0" cellspacing="0" border="0" role="presentation" style="width:100%;background:{card_bg};border-radius:{radius};overflow:hidden;">
+<tr>
+<td style="padding:10px 14px;vertical-align:top;">
+  <div style="font-size:14px;font-weight:bold;color:{title_color};line-height:1.3;">{_esc(film.title)}{star}</div>
+  <div style="font-size:12px;color:{meta_color};margin-top:2px;">{meta_line}</div>
+  <div style="font-size:12px;color:{text_color};margin-top:3px;line-height:1.4;">{logline}</div>
 </td>
-<td style="padding:8px 6px;border-bottom:1px solid {DARK_BORDER};vertical-align:top;white-space:nowrap;">
-  <div style="font-size:12px;font-weight:bold;color:{DARK_TEXT};">{scores}</div>
+</tr>
+<tr>
+<td style="padding:0 14px 10px 14px;">
+  <div style="font-size:12px;color:{text_color};line-height:1.5;">{showtimes}</div>
+  <div style="font-size:12px;margin-top:6px;">{scores} &nbsp; {book_buttons}</div>
 </td>
-<td style="padding:8px 8px 8px 6px;border-bottom:1px solid {DARK_BORDER};vertical-align:top;">
-  <div style="font-size:11px;color:{DARK_TEXT_MUTED};line-height:1.4;">{showtimes}</div>
-  <a href="{_esc(book_url)}" style="display:inline-block;background:{PH_PINK};color:{PH_WHITE};text-decoration:none;padding:4px 10px;border-radius:3px;font-size:11px;font-weight:bold;margin-top:4px;">Book</a>
-</td>
-</tr>"""
+</tr>
+</table>
+</td></tr>"""
 
 
 def format_digest_html(films: list[Film], now: datetime | None = None) -> str:
@@ -282,7 +346,7 @@ def format_digest_html(films: list[Film], now: datetime | None = None) -> str:
         now = datetime.now(LONDON_TZ)
 
     date_str = now.strftime("%A %d %B %Y")
-    sorted_films = sorted(films, key=lambda f: f.title.lower())
+    sorted_films = sorted(films, key=_sort_key_mc_desc)
 
     if sorted_films:
         film_rows = "\n".join(_film_row_html(f) for f in sorted_films)
@@ -293,13 +357,9 @@ def format_digest_html(films: list[Film], now: datetime | None = None) -> str:
         )
 
     highlighted_count = sum(1 for f in sorted_films if is_highlighted(f.scores))
-    legend = ""
+    star_legend = ""
     if highlighted_count > 0:
-        legend = f"""<tr>
-<td colspan="4" style="padding:6px 8px;font-size:11px;color:{DARK_TEXT_MUTED};background:{DARK_CARD};">
-  &#11088; = Metacritic &ge; 70, IMDb &ge; 7.0, or Rotten Tomatoes &ge; 80%
-</td>
-</tr>"""
+        star_legend = f'<br>&#11088; = Metacritic &ge; 76 or IMDb &ge; 7.7'
 
     return f"""<!DOCTYPE html>
 <html>
@@ -316,25 +376,18 @@ def format_digest_html(films: list[Film], now: datetime | None = None) -> str:
 
 <!-- Header -->
 <tr><td style="background:{DARK_BG};padding:24px 20px;text-align:center;">
-  <img src="{PH_LOGO_URL}" alt="Picturehouse Cinemas" width="200" style="max-width:200px;width:100%;height:auto;margin-bottom:12px;display:block;margin-left:auto;margin-right:auto;">
-  <div style="color:{PH_WHITE};font-size:24px;font-weight:bold;letter-spacing:0.5px;font-family:{FONT_STACK};">Cinema Digest</div>
+  <img src="{PH_LOGO_URL}" alt="Picturehouse Cinemas" width="185" height="109" style="width:185px;height:109px;margin-bottom:12px;display:block;margin-left:auto;margin-right:auto;-ms-interpolation-mode:bicubic;image-rendering:-webkit-optimize-contrast;">
+  <div style="color:{PH_WHITE};font-size:24px;font-weight:bold;letter-spacing:0.5px;font-family:{FONT_STACK};">&mdash;&ensp;Cinema Digest&ensp;&mdash;</div>
   <div style="color:{DARK_TEXT_MUTED};font-size:13px;margin-top:4px;">{_esc(date_str)}</div>
 </td></tr>
 
-<!-- Pink bar -->
-<tr><td style="background:{PH_PINK};padding:10px 20px;text-align:center;">
-  <span style="color:{PH_WHITE};font-size:12px;font-weight:bold;letter-spacing:1px;text-transform:uppercase;">Clapham Picturehouse &amp; Ritzy Picturehouse, Brixton</span>
-</td></tr>
-
 <!-- Info -->
-<tr><td style="background:{DARK_CARD};padding:12px 20px;text-align:center;border-bottom:1px solid {DARK_BORDER};">
-  <span style="font-size:12px;color:{DARK_TEXT_MUTED};">Evening &amp; weekend showtimes for the next 7 days &middot; Weekdays from 18:00 &middot; Weekends from 11:00</span>
+<tr><td style="background:{PH_PINK};padding:12px 20px;text-align:center;border-radius:12px;">
+  <span style="font-size:12px;color:{PH_WHITE};">Evening &amp; weekend showtimes for the next 7 days at Clapham Picturehouse and Ritzy &middot; Weekdays from 18:00 &middot; Weekends from 11:00</span>
 </td></tr>
-
-{legend}
 
 <!-- Films -->
-<tr><td colspan="1" style="padding:0;">
+<tr><td colspan="1" style="padding:8px;">
 <table cellpadding="0" cellspacing="0" border="0" role="presentation" style="width:100%;">
 {film_rows}
 </table>
@@ -343,9 +396,8 @@ def format_digest_html(films: list[Film], now: datetime | None = None) -> str:
 <!-- Footer -->
 <tr><td style="background:{DARK_BG};padding:20px;text-align:center;">
   <div style="color:{DARK_TEXT_DIM};font-size:11px;line-height:1.6;">
-    Scores: {_score_icon(ICON_MC)}Metacritic &middot; {_score_icon(ICON_IMDB)}IMDb &middot; {_score_icon(ICON_RT)}Rotten Tomatoes<br>
+    Scores: {_score_icon(ICON_MC)}Metacritic &middot; {_score_icon(ICON_IMDB)}IMDb &middot; {_score_icon(ICON_RT)}Rotten Tomatoes{star_legend}<br>
     Listings from <a href="https://film.datathistle.com/" style="color:{PH_PINK};text-decoration:none;">Data Thistle</a>
-    &middot; Scores from <a href="https://www.omdbapi.com/" style="color:{PH_PINK};text-decoration:none;">OMDb</a>
   </div>
 </td></tr>
 

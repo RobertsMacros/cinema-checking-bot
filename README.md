@@ -24,6 +24,7 @@ cp .env.example .env
 | Variable | Description |
 |----------|-------------|
 | `OMDB_API_KEY` | Free API key from [omdbapi.com](https://www.omdbapi.com/apikey.aspx) (1000 requests/day) |
+| `TMDB_API_KEY` | Free API key from [themoviedb.org](https://www.themoviedb.org/settings/api) (fallback for score lookups) |
 | `SMTP_HOST` | SMTP server (default: `smtp.gmail.com`) |
 | `SMTP_PORT` | SMTP port (default: `587`) |
 | `SMTP_USER` | SMTP username |
@@ -166,11 +167,37 @@ sudo systemctl start cinema-digest.timer
 
 systemd timers run whether or not a user is logged in. `Persistent=true` ensures a missed run (e.g. machine was off) fires when the machine comes back online.
 
-### Option 4: Virtual machine
+### Option 4: Task Scheduler (Windows)
+
+Create a scheduled task that runs daily at 07:00:
+
+```powershell
+$action = New-ScheduledTaskAction `
+    -Execute "python" `
+    -Argument "-m cinema_digest.main" `
+    -WorkingDirectory "C:\path\to\cinema-checking-bot"
+
+$trigger = New-ScheduledTaskTrigger -Daily -At 7:00AM
+
+$settings = New-ScheduledTaskSettingsSet `
+    -StartWhenAvailable `
+    -RunOnlyIfNetworkAvailable
+
+Register-ScheduledTask `
+    -TaskName "CinemaDigest" `
+    -Action $action `
+    -Trigger $trigger `
+    -Settings $settings `
+    -Description "Daily cinema digest email"
+```
+
+`-StartWhenAvailable` ensures a missed run (e.g. laptop was asleep) fires when the machine wakes up. The task runs whether or not you are logged in if you configure it under "Run whether user is logged on or not" in the Task Scheduler GUI.
+
+### Option 5: Virtual machine
 
 If your local machine is not always on, run this on a cheap Linux VM (e.g. a free-tier Oracle Cloud instance, a small DigitalOcean droplet, or a Raspberry Pi). Set up using the cron or systemd options above.
 
-### Option 5: GitHub Actions
+### Option 6: GitHub Actions
 
 If this repo is pushed to GitHub, the included workflow at `.github/workflows/cinema_digest.yml` runs daily at 06:00 UTC (07:00 BST / 06:00 GMT). Add your secrets in the repo's Settings > Secrets and variables > Actions.
 

@@ -5,7 +5,6 @@ from zoneinfo import ZoneInfo
 
 from cinema_digest.formatter import (
     _compact_logline,
-    _format_booking_link,
     _format_scores,
     _format_showtimes,
     _clean_logline,
@@ -62,7 +61,7 @@ class TestFormatShowtimes:
             ),
         ]
         result = _format_showtimes(screenings)
-        assert result == "Clapham: Tue 18:10; Ritzy: Fri 19:00"
+        assert result == "Clapham: Tue 18:10 | Ritzy: Fri 19:00"
 
     def test_multiple_times_same_cinema(self):
         screenings = [
@@ -78,25 +77,25 @@ class TestFormatShowtimes:
             ),
         ]
         result = _format_showtimes(screenings)
-        assert result == "Clapham: Tue 18:10, Thu 20:30"
+        assert result == "Clapham: Tue 18:10; Thu 20:30"
 
 
 class TestFormatBookingLink:
-    def test_picks_earliest(self):
-        screenings = [
-            Screening(
-                cinema="Ritzy",
-                date=datetime(2026, 3, 13, 19, 0, tzinfo=LONDON_TZ),
-                booking_url="https://ritzy.com/late",
-            ),
-            Screening(
-                cinema="Clapham",
-                date=datetime(2026, 3, 10, 18, 10, tzinfo=LONDON_TZ),
-                booking_url="https://clapham.com/early",
-            ),
-        ]
-        result = _format_booking_link(screenings)
-        assert result == "[Book at Clapham](https://clapham.com/early)"
+    def test_film_with_ph_url(self):
+        film = Film(
+            title="Test",
+            ph_url="https://www.picturehouses.com/movie-details/020/HO123/test",
+            screenings=[
+                Screening(
+                    cinema="Clapham",
+                    date=datetime(2026, 3, 10, 18, 10, tzinfo=LONDON_TZ),
+                    booking_url="https://old.com",
+                ),
+            ],
+            scores=Scores(),
+        )
+        result = format_film_line(film)
+        assert "picturehouses.com/movie-details" in result
 
 
 class TestCleanLogline:
@@ -120,18 +119,18 @@ class TestCompactLogline:
         assert _compact_logline(None) == ""
 
     def test_long_logline_trimmed_at_sentence(self):
-        long = "First sentence here. " + "X" * 200
+        long = "First sentence here. Second part is very long " + "X" * 200
         result = _compact_logline(long)
         assert result == "First sentence here."
 
-    def test_no_ellipsis_cutoff(self):
-        """If no sentence boundary found, return full text instead of cutting off."""
+    def test_no_sentence_break_truncates_cleanly(self):
+        """If no sentence boundary found, truncate at a natural pause."""
         long = "A really long logline without any sentence breaks that just keeps going and going " * 3
         result = _compact_logline(long)
-        assert "\u2026" not in result
-        assert result == _clean_logline(long)
+        assert result.endswith(".")
+        assert len(result) <= 180
 
-    def test_under_180_chars_unchanged(self):
+    def test_under_120_chars_unchanged(self):
         text = "A decent logline that is well within the limit."
         assert _compact_logline(text) == text
 
@@ -156,7 +155,8 @@ class TestFormatFilmLine:
         assert "dir. Jane Director" in result
         assert "83 / 7.4 / 91%" in result
         assert "Clapham: Tue 18:10" in result
-        assert "[Book at Clapham](https://example.com/book)" in result
+        assert "[Book]" in result
+        assert "picturehouses.com" in result
 
     def test_special_characters_in_title(self):
         film = Film(
@@ -219,26 +219,23 @@ class TestIsHighlighted:
     def test_empty_scores(self):
         assert is_highlighted(Scores()) is False
 
-    def test_metacritic_70(self):
-        assert is_highlighted(Scores(metacritic=70)) is True
+    def test_metacritic_76(self):
+        assert is_highlighted(Scores(metacritic=76)) is True
 
-    def test_metacritic_69(self):
-        assert is_highlighted(Scores(metacritic=69)) is False
+    def test_metacritic_75(self):
+        assert is_highlighted(Scores(metacritic=75)) is False
 
-    def test_imdb_7(self):
-        assert is_highlighted(Scores(imdb=7.0)) is True
+    def test_imdb_77(self):
+        assert is_highlighted(Scores(imdb=7.7)) is True
 
-    def test_imdb_6_9(self):
-        assert is_highlighted(Scores(imdb=6.9)) is False
+    def test_imdb_76(self):
+        assert is_highlighted(Scores(imdb=7.6)) is False
 
-    def test_rt_80(self):
-        assert is_highlighted(Scores(rotten_tomatoes=80)) is True
+    def test_rt_not_used_for_highlight(self):
+        assert is_highlighted(Scores(rotten_tomatoes=100)) is False
 
-    def test_rt_79(self):
-        assert is_highlighted(Scores(rotten_tomatoes=79)) is False
-
-    def test_any_one_qualifies(self):
-        assert is_highlighted(Scores(metacritic=50, imdb=5.0, rotten_tomatoes=95)) is True
+    def test_mc_qualifies_alone(self):
+        assert is_highlighted(Scores(metacritic=80, imdb=5.0, rotten_tomatoes=20)) is True
 
 
 class TestFormatDigestHtml:

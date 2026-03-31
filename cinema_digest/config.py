@@ -13,6 +13,20 @@ CINEMAS = {
     "Ritzy": "https://film.datathistle.com/cinema/46857-ritzy-picturehouse-brixton/",
 }
 
+# Picturehouse website pages (stable links for booking)
+CINEMA_URLS = {
+    "Clapham": "https://www.picturehouses.com/cinema/clapham-picturehouse",
+    "Ritzy": "https://www.picturehouses.com/cinema/the-ritzy",
+}
+
+# Picturehouse cinema codes for movie-details URLs
+CINEMA_CODES = {
+    "Clapham": "020",
+    "Ritzy": "004",
+}
+
+PH_WHATS_ON_URL = "https://www.picturehouses.com/whats-on"
+
 # Minimum number of films we expect per cinema. If we find fewer, something
 # is likely wrong with the scraper or the page structure has changed.
 MIN_FILMS_PER_CINEMA = 3

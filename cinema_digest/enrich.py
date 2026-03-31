@@ -14,6 +14,7 @@ from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from cinema_digest.config import CINEMA_CODES, PH_WHATS_ON_URL
 from cinema_digest.models import Film, Scores
 from cinema_digest.scraper import normalize_title
 
@@ -90,7 +91,8 @@ def _parse_scores(data: dict) -> Scores:
                 pass
             break
 
-    return Scores(metacritic=metacritic, imdb=imdb, rotten_tomatoes=rt)
+    imdb_id = data.get("imdbID")
+    return Scores(metacritic=metacritic, imdb=imdb, rotten_tomatoes=rt, imdb_id=imdb_id)
 
 
 def fetch_omdb(
@@ -291,6 +293,171 @@ def _apply_tmdb_data(film: Film, data: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# IMDb scraping (no API key needed)
+# ---------------------------------------------------------------------------
+
+IMDB_SUGGEST_URL = "https://v2.sg.media-imdb.com/suggestion"
+IMDB_GRAPHQL_URL = "https://caching.graphql.imdb.com/"
+
+_BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+}
+
+
+def _find_imdb_id(
+    title: str, year: int | None, session: requests.Session
+) -> str | None:
+    """Search IMDb suggestions for a film and return the IMDb ID."""
+    query = re.sub(r"[^\w\s]", "", title.lower()).replace(" ", "_")[:20]
+    first_char = query[0] if query else "a"
+    url = f"{IMDB_SUGGEST_URL}/{first_char}/{query}.json"
+
+    resp = session.get(url, headers=_BROWSER_HEADERS, timeout=10)
+    if resp.status_code != 200:
+        return None
+
+    results = resp.json().get("d", [])
+    # Filter to movies only
+    movies = [r for r in results if r.get("qid") in ("movie", "tvMovie")]
+    if not movies:
+        return None
+
+    # If year specified, prefer exact match
+    if year:
+        for m in movies:
+            if m.get("y") == year:
+                sim = _title_similarity(title, m.get("l", ""))
+                if sim >= 0.6:
+                    return m["id"]
+
+    # Otherwise take best title match
+    best = max(movies[:5], key=lambda r: _title_similarity(title, r.get("l", "")))
+    if _title_similarity(title, best.get("l", "")) >= 0.6:
+        return best["id"]
+    return None
+
+
+def _fetch_imdb_rating(
+    imdb_id: str, session: requests.Session
+) -> float | None:
+    """Fetch IMDb rating via the public GraphQL endpoint."""
+    query = (
+        '{ title(id: "' + imdb_id + '") { '
+        "ratingsSummary { aggregateRating voteCount } } }"
+    )
+    resp = session.post(
+        IMDB_GRAPHQL_URL,
+        json={"query": query},
+        headers={**_BROWSER_HEADERS, "content-type": "application/json"},
+        timeout=10,
+    )
+    if resp.status_code != 200:
+        return None
+
+    data = resp.json()
+    rating = (
+        data.get("data", {})
+        .get("title", {})
+        .get("ratingsSummary", {})
+        .get("aggregateRating")
+    )
+    if rating and isinstance(rating, (int, float)):
+        return round(float(rating), 1)
+    return None
+
+
+def _enrich_from_imdb(film: Film, session: requests.Session) -> None:
+    """Fill missing IMDb score and ID by scraping IMDb directly."""
+    if film.scores and film.scores.imdb is not None and film.scores.imdb_id:
+        return
+
+    clean = _clean_title_for_search(film.title)
+    imdb_id = _find_imdb_id(clean, film.year, session)
+    if not imdb_id:
+        logger.debug("IMDb: no ID found for %r", film.title)
+        return
+
+    if film.scores is None:
+        film.scores = Scores()
+    film.scores.imdb_id = imdb_id
+
+    if film.scores.imdb is None:
+        rating = _fetch_imdb_rating(imdb_id, session)
+        if rating:
+            film.scores.imdb = rating
+            logger.info("IMDb scrape: %r → %.1f (ID=%s)", film.title, rating, imdb_id)
+
+
+# ---------------------------------------------------------------------------
+# Metacritic scraping (no API key needed)
+# ---------------------------------------------------------------------------
+
+MC_MOVIE_URL = "https://www.metacritic.com/movie"
+
+
+def _mc_slug(title: str) -> str:
+    """Convert a film title to a Metacritic URL slug (keeps articles)."""
+    s = title.lower().strip()
+    s = re.sub(r"[^\w\s-]", "", s)
+    s = re.sub(r"\s+", "-", s).strip("-")
+    return s
+
+
+def _fetch_mc_score(
+    title: str, year: int | None, session: requests.Session
+) -> tuple[int | None, str | None]:
+    """Fetch Metacritic score from the movie page. Returns (score, slug)."""
+    # Try with title as slug, then with year suffix for disambiguation
+    slug = _mc_slug(title)
+    # Also try without leading article for edge cases
+    slug_no_article = re.sub(r"^(the|a|an)-", "", slug)
+    candidates = [slug]
+    if year:
+        candidates.append(f"{slug}-{year}")
+    if slug_no_article != slug:
+        candidates.append(slug_no_article)
+
+    for candidate in candidates:
+        url = f"{MC_MOVIE_URL}/{candidate}/"
+        resp = session.get(url, headers=_BROWSER_HEADERS, timeout=10)
+        if resp.status_code != 200:
+            continue
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        for script in soup.find_all("script", type="application/ld+json"):
+            try:
+                data = json.loads(script.string)
+                if not isinstance(data, dict):
+                    continue
+                rating = data.get("aggregateRating", {})
+                score = rating.get("ratingValue")
+                if score is not None:
+                    return int(score), candidate
+            except (json.JSONDecodeError, ValueError, TypeError):
+                continue
+
+    return None, None
+
+
+def _enrich_from_mc(film: Film, session: requests.Session) -> None:
+    """Fill missing Metacritic score by scraping metacritic.com."""
+    if film.scores and film.scores.metacritic is not None:
+        return
+
+    clean = _clean_title_for_search(film.title)
+    score, slug = _fetch_mc_score(clean, film.year, session)
+
+    if film.scores is None:
+        film.scores = Scores()
+
+    if slug:
+        film.scores.mc_slug = slug
+    if score is not None:
+        film.scores.metacritic = score
+        logger.info("MC scrape: %r → %d (slug=%s)", film.title, score, slug)
+
+
+# ---------------------------------------------------------------------------
 # Rotten Tomatoes scraping (no API key needed)
 # ---------------------------------------------------------------------------
 
@@ -318,14 +485,18 @@ def _find_rt_slug(title: str, year: int | None, session: requests.Session) -> st
         return None
 
     soup = BeautifulSoup(resp.text, "html.parser")
-    # Movie result links look like /m/some_slug
+    # Movie result links look like /m/some_slug or full URLs containing /m/
     for a_tag in soup.find_all("a", href=True):
         href = a_tag["href"]
-        if href.startswith("/m/"):
+        # Handle both relative (/m/slug) and absolute (https://...com/m/slug) URLs
+        if "/m/" in href:
+            # Extract the /m/slug portion
+            idx = href.index("/m/")
+            slug = href[idx:]
             # Check the link text roughly matches our title
             link_text = a_tag.get_text(strip=True)
             if link_text and _title_similarity(title, link_text) >= 0.6:
-                return href
+                return slug
     return None
 
 
@@ -387,11 +558,147 @@ def _enrich_from_rt(film: Film, session: requests.Session) -> None:
         return
 
     tomatometer, _audience = _scrape_rt_scores(slug, session)
+    if film.scores is None:
+        film.scores = Scores()
+    film.scores.rt_slug = slug
     if tomatometer is not None:
-        if film.scores is None:
-            film.scores = Scores()
         film.scores.rotten_tomatoes = tomatometer
         logger.info("RT scrape: %r → %d%%", film.title, tomatometer)
+
+
+# ---------------------------------------------------------------------------
+# Logline fallback — check multiple sources for a short logline
+# ---------------------------------------------------------------------------
+
+LOGLINE_CAP = 180
+
+
+def _fetch_imdb_plot(imdb_id: str, session: requests.Session) -> str | None:
+    """Get a short plot summary from IMDb GraphQL (clean, concise)."""
+    try:
+        query = (
+            '{ title(id: "' + imdb_id + '") { '
+            "plot { plotText { plainText } } } }"
+        )
+        resp = session.post(
+            IMDB_GRAPHQL_URL,
+            json={"query": query},
+            headers={**_BROWSER_HEADERS, "content-type": "application/json"},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return None
+        plot = (
+            resp.json()
+            .get("data", {})
+            .get("title", {})
+            .get("plot", {})
+            .get("plotText", {})
+            .get("plainText")
+        )
+        if plot and len(plot) > 20:
+            return plot
+    except Exception:
+        pass
+    return None
+
+
+def _is_real_logline(text: str) -> bool:
+    """Filter out SEO filler that isn't a real plot description."""
+    filler = [
+        "discover reviews",
+        "stay updated",
+        "critic and audience scores",
+        "rotten tomatoes",
+        "metacritic",
+    ]
+    lower = text.lower()
+    return not any(f in lower for f in filler)
+
+
+def _enrich_loglines(films: list[Film], session: requests.Session) -> None:
+    """For films with long loglines, check IMDb for a shorter alternative."""
+    for film in films:
+        if film.logline and len(film.logline) <= LOGLINE_CAP:
+            continue  # already short enough
+
+        candidates: list[str] = []
+        if film.logline and _is_real_logline(film.logline):
+            candidates.append(film.logline)
+
+        # Best source: IMDb plot (concise, always a real synopsis)
+        if film.scores and film.scores.imdb_id:
+            alt = _fetch_imdb_plot(film.scores.imdb_id, session)
+            if alt and _is_real_logline(alt):
+                candidates.append(alt)
+
+        if not candidates:
+            continue
+
+        # Prefer one that fits the cap; if none fit, take shortest
+        under_cap = [c for c in candidates if len(c) <= LOGLINE_CAP]
+        if under_cap:
+            film.logline = max(under_cap, key=len)
+        else:
+            film.logline = min(candidates, key=len)
+
+        logger.debug(
+            "Logline for %r: %d chars %s",
+            film.title,
+            len(film.logline),
+            "(OK)" if len(film.logline) <= LOGLINE_CAP else "(long)",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Picturehouse booking links (scrape film codes from PH website)
+# ---------------------------------------------------------------------------
+
+
+def _fetch_ph_film_codes(session: requests.Session) -> dict[str, tuple[str, str]]:
+    """Fetch film HO codes from Picturehouse whats-on page.
+
+    Returns dict mapping normalized title -> (ho_code, slug).
+    """
+    resp = session.get(PH_WHATS_ON_URL, headers=_BROWSER_HEADERS, timeout=15)
+    if resp.status_code != 200:
+        logger.warning("Failed to fetch PH whats-on: %d", resp.status_code)
+        return {}
+
+    codes: dict[str, tuple[str, str]] = {}
+    for match in re.finditer(r'/movie-details/\d+/(HO\d+)/([^?"]+)', resp.text):
+        ho_code, slug = match.group(1), match.group(2)
+        norm = normalize_title(slug.replace("-", " "))
+        codes[norm] = (ho_code, slug)
+
+    logger.info("Fetched %d PH film codes", len(codes))
+    return codes
+
+
+def _build_ph_url(ho_code: str, slug: str, cinema: str) -> str:
+    """Build a Picturehouse movie-details URL."""
+    code = CINEMA_CODES.get(cinema, "000")
+    return f"https://www.picturehouses.com/movie-details/{code}/{ho_code}/{slug}"
+
+
+def _enrich_ph_links(films: list[Film], session: requests.Session) -> None:
+    """Set ph_url on each film by matching against PH website."""
+    try:
+        codes = _fetch_ph_film_codes(session)
+    except Exception:
+        logger.exception("Failed to fetch PH film codes")
+        return
+
+    for film in films:
+        norm = normalize_title(film.title)
+        match = codes.get(norm)
+        if match:
+            ho_code, slug = match
+            first = min(film.screenings, key=lambda s: s.date)
+            film.ph_url = _build_ph_url(ho_code, slug, first.cinema)
+            logger.debug("PH link: %r → %s", film.title, film.ph_url)
+        else:
+            logger.debug("PH: no match for %r", film.title)
 
 
 def enrich_films(
@@ -401,48 +708,73 @@ def enrich_films(
     session: requests.Session | None = None,
 ) -> None:
     """Enrich all films with scores. Failures are logged but do not propagate."""
+    s = session or _make_session()
+
     if not api_key:
-        logger.warning("No OMDb API key configured; all scores will be N/A")
+        logger.warning("No OMDb API key configured; OMDb scores will be N/A")
         for film in films:
             film.scores = Scores()
-        return
+    else:
+        for film in films:
+            try:
+                enrich_film(film, api_key, session=s)
+            except Exception:
+                logger.exception("Failed to enrich %r", film.title)
+                film.scores = Scores()
 
-    s = session or _make_session()
+        # TMDB→IMDB ID→OMDb pass: find films on TMDB, get IMDB ID, look up full scores
+        if tmdb_api_key:
+            for film in films:
+                scores = film.scores
+                has_any = scores and (
+                    scores.metacritic is not None
+                    or scores.imdb is not None
+                    or scores.rotten_tomatoes is not None
+                )
+                if has_any:
+                    continue
+                try:
+                    found = _enrich_via_tmdb_imdb(film, api_key, tmdb_api_key, s)
+                    if not found:
+                        # Fall back to basic TMDB data (vote_average as IMDb-style)
+                        clean = _clean_title_for_search(film.title)
+                        tmdb_data = _fetch_tmdb(clean, film.year, tmdb_api_key, s)
+                        if tmdb_data:
+                            _apply_tmdb_data(film, tmdb_data)
+                            logger.info("TMDB fallback enriched %r", film.title)
+                except Exception:
+                    logger.exception("TMDB fallback failed for %r", film.title)
+
+    # Direct scraping passes — always run, no API keys needed
+    # IMDb: get ID + rating
     for film in films:
         try:
-            enrich_film(film, api_key, session=s)
+            _enrich_from_imdb(film, s)
         except Exception:
-            logger.exception("Failed to enrich %r", film.title)
-            film.scores = Scores()
+            logger.exception("IMDb scrape failed for %r", film.title)
 
-    # TMDB→IMDB ID→OMDb pass: find films on TMDB, get IMDB ID, look up full scores
-    if tmdb_api_key:
-        for film in films:
-            scores = film.scores
-            has_any = scores and (
-                scores.metacritic is not None
-                or scores.imdb is not None
-                or scores.rotten_tomatoes is not None
-            )
-            if has_any:
-                continue
-            try:
-                found = _enrich_via_tmdb_imdb(film, api_key, tmdb_api_key, s)
-                if not found:
-                    # Fall back to basic TMDB data (vote_average as IMDb-style)
-                    clean = _clean_title_for_search(film.title)
-                    tmdb_data = _fetch_tmdb(clean, film.year, tmdb_api_key, s)
-                    if tmdb_data:
-                        _apply_tmdb_data(film, tmdb_data)
-                        logger.info("TMDB fallback enriched %r", film.title)
-            except Exception:
-                logger.exception("TMDB fallback failed for %r", film.title)
-
-    # RT scraping pass — fills missing RT scores for any film
+    # Metacritic: get score from movie page
     for film in films:
-        if film.scores and film.scores.rotten_tomatoes is not None:
+        if film.scores and film.scores.metacritic is not None:
+            continue
+        try:
+            _enrich_from_mc(film, s)
+        except Exception:
+            logger.exception("MC scrape failed for %r", film.title)
+
+    # RT: get tomatometer + slug
+    for film in films:
+        if film.scores is None:
+            film.scores = Scores()
+        if film.scores.rotten_tomatoes is not None:
             continue
         try:
             _enrich_from_rt(film, s)
         except Exception:
             logger.exception("RT scrape failed for %r", film.title)
+
+    # Logline fallback — check alternative sources for long loglines
+    _enrich_loglines(films, s)
+
+    # Picturehouse booking links
+    _enrich_ph_links(films, s)
