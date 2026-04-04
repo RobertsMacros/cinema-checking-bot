@@ -52,6 +52,8 @@ def send_digest(
         raise ValueError("No recipient email addresses configured")
     if not smtp_user or not smtp_password:
         raise ValueError("SMTP credentials not configured")
+    if not smtp_host:
+        raise ValueError("SMTP host not configured")
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
@@ -63,23 +65,31 @@ def send_digest(
 
     logger.info("Sending digest to %s via %s:%d", to_addrs, smtp_host, smtp_port)
 
-    sent = False
-
     # Try SSL on port 465 first (works on GitHub Actions and most CI)
     try:
         logger.info("Trying SMTP_SSL on port 465")
-        with smtplib.SMTP_SSL(smtp_host, 465, timeout=30) as server:
+        server = smtplib.SMTP_SSL(smtp_host, 465, timeout=30)
+        try:
             server.login(smtp_user, smtp_password)
             server.sendmail(from_addr, to_addrs, msg.as_string())
-        sent = True
+            logger.info("Digest sent successfully via SSL port 465")
+            return
+        finally:
+            server.quit()
     except Exception as e:
-        logger.info("SSL port 465 failed (%s), trying STARTTLS on port %d", e, smtp_port)
+        logger.warning("SSL port 465 failed: %s", e)
 
-    # Fallback: STARTTLS on configured port (works locally)
-    if not sent:
-        with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
-            server.starttls()
-            server.login(smtp_user, smtp_password)
-            server.sendmail(from_addr, to_addrs, msg.as_string())
+    # Fallback: STARTTLS on configured port
+    logger.info("Trying STARTTLS on port %d", smtp_port)
+    server = smtplib.SMTP(smtp_host, smtp_port, timeout=30)
+    try:
+        server.ehlo()
+        server.starttls()
+        server.ehlo()
+        server.login(smtp_user, smtp_password)
+        server.sendmail(from_addr, to_addrs, msg.as_string())
+        logger.info("Digest sent successfully via STARTTLS port %d", smtp_port)
+    finally:
+        server.quit()
 
     logger.info("Digest sent successfully")
