@@ -54,6 +54,47 @@ python -m cinema_digest.main
 python -m cinema_digest.main --dry-run -v
 ```
 
+## Interactive web app
+
+As well as the scheduled email, the same listings are available as a live,
+interactive website you can open whenever you want and filter by cinema.
+
+```bash
+pip install -r requirements.txt
+python -m cinema_digest.webapp
+```
+
+Then open <http://127.0.0.1:5000>. The page lets you:
+
+- **Filter by cinema** (All / Clapham / Ritzy) — a film's showtimes and booking
+  buttons narrow to just the selected cinema.
+- **Search** by title, director, or logline.
+- Toggle **Highlights only** (Metacritic ≥ 76 or IMDb ≥ 7.7).
+- **Refresh** to force a fresh scrape.
+
+It reuses the exact scrape → filter → enrich pipeline that powers the email,
+and caches results in memory (default 30 min, set `CACHE_TTL_SECONDS`) so
+repeat visits are instant. The same `OMDB_API_KEY` / `TMDB_API_KEY` env vars
+apply (scores also fall back to direct scraping without them).
+
+### Options
+
+```bash
+python -m cinema_digest.webapp --host 0.0.0.0 --port 8080   # bind publicly
+```
+
+### Hosting it
+
+The module exposes a WSGI `app`, so any WSGI server works:
+
+```bash
+pip install gunicorn
+gunicorn cinema_digest.webapp:app --bind 0.0.0.0:8080 --timeout 120
+```
+
+Use a generous timeout: the first request after the cache expires triggers a
+scrape + enrichment that can take up to a minute.
+
 ## Running tests
 
 ```bash
