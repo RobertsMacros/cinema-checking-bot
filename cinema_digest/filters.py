@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -70,16 +71,8 @@ def filter_screenings(
 
         kept.sort(key=lambda s: s.date)
 
-        filtered_film = Film(
-            title=film.title,
-            year=film.year,
-            duration=film.duration,
-            logline=film.logline,
-            listing_url=film.listing_url,
-            screenings=kept,
-            scores=film.scores,
-        )
-        result.append(filtered_film)
+        # Copy every field (director, ph_url, ...) and swap in the kept screenings
+        result.append(replace(film, screenings=kept))
 
     logger.info(
         "After filtering: %d films with qualifying screenings (from %d total)",

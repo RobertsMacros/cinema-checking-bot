@@ -14,7 +14,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from cinema_digest.config import CINEMAS, MIN_FILMS_PER_CINEMA
-from cinema_digest.models import Film, Screening
+from cinema_digest.models import Film, Screening, ScrapeResult
 
 logger = logging.getLogger(__name__)
 
@@ -22,11 +22,13 @@ LONDON_TZ = ZoneInfo("Europe/London")
 DATA_THISTLE_BASE = "https://film.datathistle.com"
 
 # Retry strategy for HTTP requests
-_RETRY = Retry(total=3, backoff_factor=1.0, status_forcelist=[429, 500, 502, 503, 504])
+_RETRY = Retry(total=2, backoff_factor=1.0, status_forcelist=[429, 500, 502, 503, 504])
 
+# (connect, read) timeouts in seconds
+_TIMEOUT = (10, 30)
 
-class ScraperError(Exception):
-    """Raised when scraping fails in a way that indicates structural breakage."""
+# How far back a date header may be before we assume it belongs to next year
+_MAX_PAST_DAYS = 60
 
 
 def _make_session() -> requests.Session:
@@ -40,7 +42,11 @@ def _make_session() -> requests.Session:
     return session
 
 
-def fetch_page(url: str, session: requests.Session | None = None, timeout: int = 30) -> str:
+def fetch_page(
+    url: str,
+    session: requests.Session | None = None,
+    timeout: float | tuple[float, float] = _TIMEOUT,
+) -> str:
     """Fetch a page with retries and timeout."""
     s = session or _make_session()
     response = s.get(url, timeout=timeout)
@@ -62,30 +68,48 @@ def normalize_title(title: str) -> str:
     return t
 
 
-def _parse_date_header(text: str, reference_year: int) -> date | None:
+def _parse_date_header(text: str, today: date | None = None) -> date | None:
     """Parse a date header like 'Mon 9 Mar' into a date object.
 
-    Uses reference_year, adjusting to next year if the resulting date
-    is more than 60 days in the past (handles Dec/Jan crossover).
+    The header has no year, so we pick this year or next year: the first
+    candidate that is no more than 60 days in the past (handles the Dec/Jan
+    crossover). If the weekday prefix matches exactly one candidate, that
+    candidate wins. 29 Feb is only accepted in a leap year.
     """
+    if today is None:
+        today = datetime.now(LONDON_TZ).date()
+
     text = text.strip()
-    # Strip day-of-week prefix: "Mon 9 Mar" -> "9 Mar"
+    # Split day-of-week prefix: "Mon 9 Mar" -> "Mon", "9 Mar"
     parts = text.split(maxsplit=1)
     if len(parts) < 2:
         return None
-    day_month = parts[1]
+    weekday, day_month = parts
 
     try:
-        parsed = datetime.strptime(f"{day_month} {reference_year}", "%d %b %Y")
+        # 2000 is a leap year, so "29 Feb" validates here
+        parsed = datetime.strptime(f"{day_month} 2000", "%d %b %Y")
     except ValueError:
         logger.warning("Could not parse date header: %r", text)
         return None
 
-    today = datetime.now(LONDON_TZ).date()
-    if (today - parsed.date()).days > 60:
-        parsed = parsed.replace(year=reference_year + 1)
+    candidates = []
+    for year in (today.year, today.year + 1):
+        try:
+            d = date(year, parsed.month, parsed.day)
+        except ValueError:  # 29 Feb in a non-leap year
+            continue
+        if (today - d).days <= _MAX_PAST_DAYS:
+            candidates.append(d)
 
-    return parsed.date()
+    if not candidates:
+        logger.warning("Could not place date header in a year: %r", text)
+        return None
+
+    matching_weekday = [d for d in candidates if d.strftime("%a").lower() == weekday[:3].lower()]
+    if len(matching_weekday) == 1:
+        return matching_weekday[0]
+    return candidates[0]
 
 
 def _parse_time_text(time_text: str) -> time | None:
@@ -113,6 +137,19 @@ def _extract_duration(metadata_items: list[str]) -> str | None:
         if re.search(r"\d+h|\d+min", item):
             return item.strip()
     return None
+
+
+def _dedupe_screenings(screenings: list[Screening]) -> list[Screening]:
+    """Drop repeated showtimes (same cinema, same start time), keeping the first."""
+    seen: set[tuple[str, datetime]] = set()
+    unique: list[Screening] = []
+    for s in screenings:
+        key = (s.cinema, s.date)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(s)
+    return unique
 
 
 def _extract_film_blocks(soup: BeautifulSoup) -> list[tuple[Tag, list[Tag]]]:
@@ -161,7 +198,7 @@ def _flatten_elements(siblings: list[Tag]) -> list[Tag]:
 
 
 def _parse_film_block(
-    h4: Tag, siblings: list[Tag], cinema_name: str, reference_year: int
+    h4: Tag, siblings: list[Tag], cinema_name: str, today: date | None = None
 ) -> Film | None:
     """Parse a single film block into a Film object."""
     # Extract title and listing URL
@@ -190,7 +227,7 @@ def _parse_film_block(
         # Date header
         if elem.name == "h5":
             date_text = elem.get_text(strip=True)
-            current_date = _parse_date_header(date_text, reference_year)
+            current_date = _parse_date_header(date_text, today)
             current_screening_type = None  # reset on new date
             continue
 
@@ -210,13 +247,15 @@ def _parse_film_block(
         if elem.name == "ul":
             items = elem.find_all("li")
 
-            # Check if this is a metadata list (first ul before any h5)
+            # Check if this is a metadata list (first ul before any h5 that
+            # carries a year or a duration; either may be missing)
             if current_date is None and not found_first_metadata_ul:
                 item_texts = [li.get_text(strip=True) for li in items]
                 extracted_year = _extract_year(item_texts)
-                if extracted_year:
+                extracted_duration = _extract_duration(item_texts)
+                if extracted_year or extracted_duration:
                     year = extracted_year
-                    duration = _extract_duration(item_texts)
+                    duration = extracted_duration
                     found_first_metadata_ul = True
                     continue
 
@@ -264,20 +303,19 @@ def _parse_film_block(
         duration=duration,
         logline=logline,
         listing_url=listing_url,
-        screenings=screenings,
+        screenings=_dedupe_screenings(screenings),
     )
 
 
-def parse_cinema(html: str, cinema_name: str) -> list[Film]:
+def parse_cinema(html: str, cinema_name: str, today: date | None = None) -> list[Film]:
     """Parse a Data Thistle cinema page into a list of Film objects."""
     soup = BeautifulSoup(html, "html.parser")
     blocks = _extract_film_blocks(soup)
-    reference_year = datetime.now(LONDON_TZ).year
 
     films = []
     for h4, siblings in blocks:
         try:
-            film = _parse_film_block(h4, siblings, cinema_name, reference_year)
+            film = _parse_film_block(h4, siblings, cinema_name, today)
             if film:
                 films.append(film)
         except Exception:
@@ -288,19 +326,43 @@ def parse_cinema(html: str, cinema_name: str) -> list[Film]:
     return films
 
 
-def merge_films(all_films: list[Film]) -> list[Film]:
-    """Merge films from different cinemas that share the same title.
+def _merge_key(film: Film, merged: dict[tuple[str, int | None], Film]) -> tuple[str, int | None]:
+    """Pick the merge key for a film: normalized title plus year.
 
-    Uses normalized title as merge key. Combines screenings and keeps
-    the richer metadata from whichever Film has more data.
+    Films with the same title but different known years (remakes) stay
+    separate. A film with no year joins the only film of that title, or an
+    undated one; a dated film joins the same year, or an undated one.
     """
-    merged: dict[str, Film] = {}
+    title_key = normalize_title(film.title)
+    same_title = [k for k in merged if k[0] == title_key]
+    if film.year is None:
+        if len(same_title) == 1:
+            return same_title[0]
+        undated = [k for k in same_title if merged[k].year is None]
+        return undated[0] if undated else (title_key, None)
+    for k in same_title:
+        if merged[k].year == film.year:
+            return k
+    for k in same_title:
+        if merged[k].year is None:
+            return k
+    return (title_key, film.year)
+
+
+def merge_films(all_films: list[Film]) -> list[Film]:
+    """Merge films from different cinemas that are the same film.
+
+    Uses normalized title plus year as merge key, so remakes that share a
+    title are kept apart. Combines screenings (dropping repeated showtimes)
+    and keeps the richer metadata from whichever Film has more data.
+    """
+    merged: dict[tuple[str, int | None], Film] = {}
 
     for film in all_films:
-        key = normalize_title(film.title)
+        key = _merge_key(film, merged)
         if key in merged:
             existing = merged[key]
-            existing.screenings.extend(film.screenings)
+            existing.screenings = _dedupe_screenings(existing.screenings + film.screenings)
             # Keep richer metadata
             if film.logline and (not existing.logline or len(film.logline) > len(existing.logline)):
                 existing.logline = film.logline
@@ -317,35 +379,55 @@ def merge_films(all_films: list[Film]) -> list[Film]:
                 duration=film.duration,
                 logline=film.logline,
                 listing_url=film.listing_url,
-                screenings=list(film.screenings),
+                screenings=_dedupe_screenings(list(film.screenings)),
             )
 
     return list(merged.values())
 
 
-def scrape_all(session: requests.Session | None = None) -> list[Film]:
+def scrape_all(session: requests.Session | None = None, today: date | None = None) -> ScrapeResult:
     """Fetch and parse listings from all configured cinemas.
 
-    Returns merged list of films with screenings from all cinemas.
-    Raises ScraperError if any cinema returns suspiciously few results.
+    Never raises for a single cinema: a failed fetch, an unusually low film
+    count, or films with no readable showtimes are recorded as warnings on
+    the result so the digest can still be sent and flag the problem.
     """
     s = session or _make_session()
+    result = ScrapeResult()
     all_films: list[Film] = []
 
     for cinema_name, url in CINEMAS.items():
         logger.info("Fetching listings for %s from %s", cinema_name, url)
-        html = fetch_page(url, session=s)
-        films = parse_cinema(html, cinema_name)
+        try:
+            html = fetch_page(url, session=s)
+        except requests.RequestException as e:
+            logger.error("Could not fetch %s listings: %s", cinema_name, e)
+            result.warnings.append(
+                f"Could not fetch the {cinema_name} listings ({type(e).__name__}); "
+                f"{cinema_name} films are missing from this digest."
+            )
+            result.listings_suspect = True
+            continue
+
+        films = parse_cinema(html, cinema_name, today)
+        screening_count = sum(len(f.screenings) for f in films)
 
         if len(films) < MIN_FILMS_PER_CINEMA:
-            raise ScraperError(
-                f"Only found {len(films)} films for {cinema_name} "
-                f"(expected at least {MIN_FILMS_PER_CINEMA}). "
-                f"The page structure may have changed."
+            logger.warning("Only %d films found for %s", len(films), cinema_name)
+            result.warnings.append(
+                f"Only {len(films)} film(s) found for {cinema_name}, which is unusually low. "
+                f"The listings page may have changed."
             )
+        if films and screening_count == 0:
+            logger.warning("%d films but no showtimes parsed for %s", len(films), cinema_name)
+            result.warnings.append(
+                f"{len(films)} film(s) found for {cinema_name} but no showtimes could be read. "
+                f"The listings page may have changed."
+            )
+            result.listings_suspect = True
 
         all_films.extend(films)
 
-    merged = merge_films(all_films)
-    logger.info("Total unique films after merging: %d", len(merged))
-    return merged
+    result.films = merge_films(all_films)
+    logger.info("Total unique films after merging: %d", len(result.films))
+    return result

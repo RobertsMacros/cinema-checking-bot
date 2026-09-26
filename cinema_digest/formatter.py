@@ -5,9 +5,10 @@ from __future__ import annotations
 import html as html_module
 import re
 from datetime import datetime
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
-from cinema_digest.config import CINEMA_URLS
+from cinema_digest.config import CINEMA_CODES, CINEMA_URLS
 from cinema_digest.models import Film, Scores, Screening
 
 LONDON_TZ = ZoneInfo("Europe/London")
@@ -38,6 +39,29 @@ ICON_MC = "https://www.google.com/s2/favicons?domain=metacritic.com&sz=32"
 ICON_IMDB = "https://www.google.com/s2/favicons?domain=imdb.com&sz=32"
 ICON_RT = "https://www.google.com/s2/favicons?domain=rottentomatoes.com&sz=32"
 
+# Logline display: aim for LOGLINE_TARGET chars of whole sentences; a single
+# first sentence may run to LOGLINE_HARD_CAP before it is shortened with "…".
+LOGLINE_TARGET = 180
+LOGLINE_HARD_CAP = 300
+
+# Per-screening booking links are only trusted in Picturehouse's current
+# format (web.picturehouses.com/order/showtimes/<cinema>-<session>/seats).
+# The old ticketing.picturehouses.com links Data Thistle used to publish are
+# dead, so anything else falls back to the film or cinema page.
+_BOOKING_HOST = "web.picturehouses.com"
+_BOOKING_PATH = re.compile(r"^/order/showtimes/\d+-\d+/seats/?$")
+
+LISTINGS_WARNING = (
+    "WARNING: the listings page may have changed. No screenings could be read "
+    "for the next 7 days, so this digest is probably wrong or incomplete. "
+    "Check the cinema websites directly."
+)
+LISTINGS_SUSPECT_NOTE = (
+    "WARNING: part of the listings could not be read, so this digest is "
+    "probably incomplete. See the notes below."
+)
+SCORES_INCOMPLETE_LABEL = "scores not fetched (time limit)"
+
 
 def is_highlighted(scores: Scores | None) -> bool:
     """A film is highlighted if Metacritic >= 76 or IMDb >= 7.7."""
@@ -61,16 +85,20 @@ def _clean_logline(logline: str | None) -> str:
     return " ".join(logline.split())
 
 
-def _format_scores(scores: Scores | None) -> str:
+def _format_scores(scores: Scores | None, incomplete: bool = False) -> str:
     """Format scores as 'MC / IMDb / RT%', using N/A for missing values."""
     if scores is None:
-        return "N/A / N/A / N/A"
-    parts = [
-        str(scores.metacritic) if scores.metacritic is not None else "N/A",
-        str(scores.imdb) if scores.imdb is not None else "N/A",
-        f"{scores.rotten_tomatoes}%" if scores.rotten_tomatoes is not None else "N/A",
-    ]
-    return " / ".join(parts)
+        text = "N/A / N/A / N/A"
+    else:
+        parts = [
+            str(scores.metacritic) if scores.metacritic is not None else "N/A",
+            str(scores.imdb) if scores.imdb is not None else "N/A",
+            f"{scores.rotten_tomatoes}%" if scores.rotten_tomatoes is not None else "N/A",
+        ]
+        text = " / ".join(parts)
+    if incomplete:
+        text += f" ({SCORES_INCOMPLETE_LABEL})"
+    return text
 
 
 def _format_showtimes(screenings: list[Screening]) -> str:
@@ -93,8 +121,7 @@ def _format_showtimes(screenings: list[Screening]) -> str:
 
 def _format_booking_link_plain(film: Film) -> str:
     """Return a markdown booking link for plain text."""
-    url = _film_booking_url(film) if hasattr(film, 'ph_url') else "https://www.picturehouses.com"
-    return f"[Book]({url})"
+    return f"[Book]({_film_booking_url(film)})"
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +131,7 @@ def _format_booking_link_plain(film: Film) -> str:
 def format_film_line(film: Film) -> str:
     """Format a single film as a bullet line."""
     logline = _compact_logline(film.logline)
-    scores = _format_scores(film.scores)
+    scores = _format_scores(film.scores, film.scores_incomplete)
     showtimes = _format_showtimes(film.screenings)
     booking = _format_booking_link_plain(film)
 
@@ -128,8 +155,30 @@ def _sort_key_mc_desc(film: Film) -> tuple:
     return (-mc, film.title.lower())
 
 
-def format_digest(films: list[Film], now: datetime | None = None) -> str:
-    """Format the complete plain-text digest body."""
+def digest_warning(films: list[Film], listings_suspect: bool = False) -> str | None:
+    """The banner to show at the top of the digest, if any.
+
+    No films at all always gets the "listings may have changed" warning:
+    there is never a genuinely empty week at two busy cinemas.
+    """
+    if not films:
+        return LISTINGS_WARNING
+    if listings_suspect:
+        return LISTINGS_SUSPECT_NOTE
+    return None
+
+
+def format_digest(
+    films: list[Film],
+    now: datetime | None = None,
+    notes: list[str] | None = None,
+    listings_suspect: bool = False,
+) -> str:
+    """Format the complete plain-text digest body.
+
+    notes are shown under the header (e.g. scraping problems);
+    listings_suspect adds a warning banner even when some films were found.
+    """
     if now is None:
         now = datetime.now(LONDON_TZ)
 
@@ -142,8 +191,14 @@ def format_digest(films: list[Film], now: datetime | None = None) -> str:
     header += "Showtimes for the next 7 days\n"
     header += "-" * 50 + "\n\n"
 
+    warning = digest_warning(films, listings_suspect)
+    if warning:
+        header += f"{warning}\n\n"
+    if notes:
+        header += "Notes:\n" + "".join(f"* {n}\n" for n in notes) + "\n"
+
     if not lines:
-        return header + "No qualifying screenings found for this week.\n"
+        return header
 
     return header + "\n".join(lines) + "\n"
 
@@ -167,7 +222,7 @@ def _score_link(icon_url: str, label: str, link_url: str | None) -> str:
     return f'{icon}{label}'
 
 
-def _format_scores_html(scores: Scores | None) -> str:
+def _format_scores_html(scores: Scores | None, incomplete: bool = False) -> str:
     na = f'<span style="color:{DARK_TEXT_DIM};">—</span>'
 
     def _val(v, fmt):
@@ -190,7 +245,10 @@ def _format_scores_html(scores: Scores | None) -> str:
         _score_link(ICON_IMDB, imdb_val, imdb_url),
         _score_link(ICON_RT, rt_val, rt_url),
     ]
-    return ' &nbsp; '.join(parts)
+    html = ' &nbsp; '.join(parts)
+    if incomplete:
+        html += f' <span style="color:{DARK_TEXT_DIM};font-style:italic;">({_esc(SCORES_INCOMPLETE_LABEL)})</span>'
+    return html
 
 
 def _format_showtimes_html(screenings: list[Screening]) -> str:
@@ -211,30 +269,27 @@ def _format_showtimes_html(screenings: list[Screening]) -> str:
 def _compact_logline(logline: str | None) -> str:
     """Return a logline suitable for ~2 lines of display.
 
-    Prefers keeping the text intact if it's short enough.  For longer
-    loglines we find the first full sentence break (". " followed by
-    an uppercase letter) and cut there.
+    Keeps as many whole sentences as fit in LOGLINE_TARGET chars. If even
+    the first sentence is longer, it is kept whole up to LOGLINE_HARD_CAP;
+    beyond that it is shortened at a word boundary and ends with "…", so a
+    cut is never disguised as the end of a sentence.
     """
     text = _clean_logline(logline)
-    if not text or len(text) <= 180:
+    if not text or len(text) <= LOGLINE_TARGET:
         return text
-    # Find a sentence break within 120 chars
-    for m in re.finditer(r'[.!?]\s+(?=[A-Z])', text):
-        if m.start() <= 180:
-            return text[:m.start() + 1]
-        break  # first break is past limit
-    # Try comma or semicolon break for a natural pause
-    truncated = text[:180]
-    for sep in (", and ", "; ", ", who ", ", where ", ", exploring ", ", facing "):
-        idx = truncated.rfind(sep)
-        if idx >= 40:
-            return text[:idx] + "."
-    # Last resort: break at last comma
-    idx = truncated.rfind(", ")
-    if idx >= 40:
-        return text[:idx] + "."
-    # Break at last space
-    return text[:177].rsplit(" ", 1)[0] + "."
+
+    # Sentence ends: . ! ? (optionally followed by a closing quote) then a
+    # space and an uppercase letter or opening quote
+    ends = [m.end() for m in re.finditer(r'[.!?][\'"\u2019\u201d]?(?=\s+[A-Z"\u201c\'])', text)]
+    fitting = [e for e in ends if e <= LOGLINE_TARGET]
+    if fitting:
+        return text[: fitting[-1]]
+
+    if ends and ends[0] <= LOGLINE_HARD_CAP:
+        return text[: ends[0]]
+
+    cut = text[: LOGLINE_HARD_CAP - 1].rsplit(" ", 1)[0].rstrip(" ,;:-\u2013\u2014")
+    return cut + "\u2026"
 
 
 def _format_showtimes_inline_html(screenings: list[Screening]) -> str:
@@ -258,12 +313,38 @@ def _format_showtimes_inline_html(screenings: list[Screening]) -> str:
     return "<br>".join(parts)
 
 
-def _film_booking_url(film: Film) -> str:
-    """Return the best booking URL: PH film page > PH cinema page > fallback."""
+def _is_valid_booking_url(url: str | None) -> bool:
+    """True for a per-screening Picturehouse booking link in the current format."""
+    if not url:
+        return False
+    parsed = urlparse(url)
+    return (
+        parsed.scheme == "https"
+        and parsed.netloc == _BOOKING_HOST
+        and bool(_BOOKING_PATH.match(parsed.path))
+    )
+
+
+def _cinema_page_url(film: Film, cinema: str) -> str:
+    """PH film page for this cinema, else the cinema's what's-on page."""
     if film.ph_url:
-        return film.ph_url
-    first = min(film.screenings, key=lambda s: s.date)
-    return CINEMA_URLS.get(first.cinema, "https://www.picturehouses.com")
+        code = CINEMA_CODES.get(cinema, "000")
+        return re.sub(r'/movie-details/\d+/', f'/movie-details/{code}/', film.ph_url)
+    return CINEMA_URLS.get(cinema, "https://www.picturehouses.com")
+
+
+def _film_booking_url(film: Film, cinema: str | None = None) -> str:
+    """Return the best booking URL for the earliest screening (optionally at one cinema).
+
+    Earliest screening's own booking link > PH film page > PH cinema page.
+    """
+    screenings = [s for s in film.screenings if cinema is None or s.cinema == cinema]
+    if not screenings:
+        return film.ph_url or "https://www.picturehouses.com"
+    first = min(screenings, key=lambda s: s.date)
+    if _is_valid_booking_url(first.booking_url):
+        return first.booking_url
+    return _cinema_page_url(film, first.cinema)
 
 
 def _book_buttons_html(film: Film, on_pink: bool = False) -> str:
@@ -280,17 +361,10 @@ def _book_buttons_html(film: Film, on_pink: bool = False) -> str:
         url = _film_booking_url(film)
         return f'<a href="{_esc(url)}" style="{btn}">Book</a>'
 
-    # Both cinemas — one button each
+    # Both cinemas — one button each, for that cinema's earliest screening
     buttons = []
     for cinema in cinemas:
-        url = _film_booking_url(film)
-        # Use cinema-specific PH URL if we can build one
-        cinema_url = CINEMA_URLS.get(cinema, url)
-        if film.ph_url:
-            # Swap the cinema code in the ph_url
-            from cinema_digest.config import CINEMA_CODES
-            code = CINEMA_CODES.get(cinema, "000")
-            cinema_url = re.sub(r'/movie-details/\d+/', f'/movie-details/{code}/', film.ph_url)
+        cinema_url = _film_booking_url(film, cinema)
         buttons.append(f'<a href="{_esc(cinema_url)}" style="{btn}">{_esc(cinema)}</a>')
     return " ".join(buttons)
 
@@ -299,7 +373,7 @@ def _film_row_html(film: Film, is_top: bool = False) -> str:
     highlighted = is_highlighted(film.scores)
 
     logline = _esc(_compact_logline(film.logline))
-    scores = _format_scores_html(film.scores)
+    scores = _format_scores_html(film.scores, film.scores_incomplete)
     showtimes = _format_showtimes_inline_html(film.screenings)
     book_buttons = _book_buttons_html(film)
 
@@ -340,21 +414,41 @@ def _film_row_html(film: Film, is_top: bool = False) -> str:
 </td></tr>"""
 
 
-def format_digest_html(films: list[Film], now: datetime | None = None) -> str:
+def _warning_rows_html(warning: str | None, notes: list[str] | None) -> str:
+    """Warning banner and notes, shown above the film list."""
+    rows = []
+    if warning:
+        rows.append(
+            f'<tr><td style="padding:8px 8px 0 8px;"><div style="background:#5c1a00;border:2px solid #ff8c42;'
+            f'border-radius:12px;padding:14px 16px;color:{PH_WHITE};font-size:14px;font-weight:bold;'
+            f'line-height:1.4;">&#9888;&#65039; {_esc(warning)}</div></td></tr>'
+        )
+    if notes:
+        items = "".join(f"<li>{_esc(n)}</li>" for n in notes)
+        rows.append(
+            f'<tr><td style="padding:8px 8px 0 8px;"><div style="background:{DARK_CARD};border-radius:12px;'
+            f'padding:10px 14px;color:{DARK_TEXT_MUTED};font-size:12px;line-height:1.5;">'
+            f'<strong style="color:{PH_WHITE};">Notes</strong>'
+            f'<ul style="margin:4px 0 0 0;padding-left:18px;">{items}</ul></div></td></tr>'
+        )
+    return "\n".join(rows)
+
+
+def format_digest_html(
+    films: list[Film],
+    now: datetime | None = None,
+    notes: list[str] | None = None,
+    listings_suspect: bool = False,
+) -> str:
     """Format the complete HTML email with Picturehouse branding."""
     if now is None:
         now = datetime.now(LONDON_TZ)
 
     date_str = now.strftime("%A %d %B %Y")
     sorted_films = sorted(films, key=_sort_key_mc_desc)
+    warning_rows = _warning_rows_html(digest_warning(films, listings_suspect), notes)
 
-    if sorted_films:
-        film_rows = "\n".join(_film_row_html(f) for f in sorted_films)
-    else:
-        film_rows = (
-            f'<tr><td colspan="4" style="padding:30px;text-align:center;color:{DARK_TEXT_MUTED};'
-            f'background:{DARK_CARD};font-size:14px;">No qualifying screenings found for this week.</td></tr>'
-        )
+    film_rows = "\n".join(_film_row_html(f) for f in sorted_films)
 
     highlighted_count = sum(1 for f in sorted_films if is_highlighted(f.scores))
     star_legend = ""
@@ -385,6 +479,8 @@ def format_digest_html(films: list[Film], now: datetime | None = None) -> str:
 <tr><td style="background:{PH_PINK};padding:12px 20px;text-align:center;border-radius:12px;">
   <span style="font-size:12px;color:{PH_WHITE};">Evening &amp; weekend showtimes for the next 7 days at Clapham Picturehouse and Ritzy &middot; Weekdays from 18:00 &middot; Weekends from 11:00</span>
 </td></tr>
+
+{warning_rows}
 
 <!-- Films -->
 <tr><td colspan="1" style="padding:8px;">

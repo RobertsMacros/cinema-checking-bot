@@ -9,3 +9,4 @@ build/
 digest_preview.html
 fix_manifest.json
 insight_dump.md
+.DS_Store

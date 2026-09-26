@@ -31,6 +31,21 @@ PH_WHATS_ON_URL = "https://www.picturehouses.com/whats-on"
 # is likely wrong with the scraper or the page structure has changed.
 MIN_FILMS_PER_CINEMA = 3
 
+# Whole-run time budget. Score lookups stop when it is used up (minus a reserve
+# for formatting and sending) so the digest always goes out. Keep this well
+# under the GitHub Actions job timeout.
+RUN_TIME_BUDGET_SECONDS = 8 * 60
+SEND_RESERVE_SECONDS = 90
+
+
+def _env(name: str, default: str) -> str:
+    """Read an env var, treating empty as unset.
+
+    GitHub Actions passes secrets that are not defined as empty strings.
+    """
+    value = os.environ.get(name, "").strip()
+    return value or default
+
 
 @dataclass(frozen=True)
 class Config:
@@ -52,8 +67,8 @@ class Config:
         return cls(
             omdb_api_key=os.environ.get("OMDB_API_KEY", ""),
             tmdb_api_key=os.environ.get("TMDB_API_KEY", ""),
-            smtp_host=os.environ.get("SMTP_HOST", "smtp.gmail.com"),
-            smtp_port=int(os.environ.get("SMTP_PORT", "587")),
+            smtp_host=_env("SMTP_HOST", "smtp.gmail.com"),
+            smtp_port=int(_env("SMTP_PORT", "587")),
             smtp_user=os.environ.get("SMTP_USER", ""),
             smtp_password=os.environ.get("SMTP_PASSWORD", ""),
             email_from=os.environ.get("EMAIL_FROM", ""),

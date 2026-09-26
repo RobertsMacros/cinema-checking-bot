@@ -138,3 +138,28 @@ class TestFilmDropping:
         result = filter_screenings([film1, film2], now=NOW)
         assert len(result) == 1
         assert result[0].title == "A Film"
+
+
+class TestFieldsPreserved:
+    def test_filtering_keeps_all_film_fields(self):
+        film = Film(
+            title="Kept",
+            year=2026,
+            director="A Director",
+            ph_url="https://www.picturehouses.com/movie-details/020/HO1/kept",
+            screenings=[_make_screening(datetime(2026, 3, 11, 19, 0, tzinfo=LONDON_TZ))],
+        )
+        result = filter_screenings([film], now=NOW)
+        assert result[0].director == "A Director"
+        assert result[0].ph_url == film.ph_url
+        assert result[0].year == 2026
+
+
+class TestDst:
+    def test_window_uses_london_wall_clock_across_dst_change(self):
+        # UK clocks go forward on Sun 29 Mar 2026: 11:00 BST is 10:00 UTC
+        now = datetime(2026, 3, 27, 9, 0, tzinfo=LONDON_TZ)
+        s = _make_screening(datetime(2026, 3, 29, 11, 0, tzinfo=LONDON_TZ))
+        result = filter_screenings([_make_film([s])], now=now)
+        assert len(result) == 1
+        assert result[0].screenings[0].date.utcoffset().total_seconds() == 3600

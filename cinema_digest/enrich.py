@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import logging
 import re
+import threading
+import time
+import unicodedata
+from concurrent.futures import ThreadPoolExecutor, wait
 from difflib import SequenceMatcher
 from pathlib import Path
 
@@ -23,7 +28,24 @@ logger = logging.getLogger(__name__)
 OMDB_API_URL = "https://www.omdbapi.com/"
 CACHE_DIR = Path(__file__).resolve().parent.parent / ".cache"
 
-_RETRY = Retry(total=3, backoff_factor=1.0, status_forcelist=[429, 500, 502, 503, 504])
+# Cache entries: {"v": CACHE_VERSION, "cached_at": epoch seconds, "data": OMDb dict or None}.
+# "data" is only ever a result that passed the title/year check; None means
+# "not found" and expires after NEGATIVE_CACHE_TTL so new releases get retried.
+CACHE_VERSION = 2
+NEGATIVE_CACHE_TTL = 7 * 24 * 60 * 60
+
+# Every score source is optional, so keep retries and timeouts short: a slow or
+# blocked site must not stall the run. (connect, read) timeouts in seconds.
+_RETRY = Retry(total=1, backoff_factor=0.5, status_forcelist=[429, 500, 502, 503, 504])
+_TIMEOUT = (5, 15)
+
+# Title/year identity check
+MIN_TITLE_SIMILARITY = 0.6
+YEAR_TOLERANCE = 1  # UK release year can differ from the production year by one
+
+DEFAULT_MAX_WORKERS = 4
+
+_thread_local = threading.local()
 
 
 def _make_session() -> requests.Session:
@@ -34,26 +56,38 @@ def _make_session() -> requests.Session:
     return session
 
 
-def _cache_key(title: str, year: int | None) -> str:
-    raw = f"{normalize_title(title)}|{year or ''}"
-    return hashlib.md5(raw.encode()).hexdigest() + ".json"
+def _thread_session() -> requests.Session:
+    """One session per worker thread (requests.Session is not thread-safe)."""
+    session = getattr(_thread_local, "session", None)
+    if session is None:
+        session = _make_session()
+        _thread_local.session = session
+    return session
+
+
 
 
 def _read_cache(key: str) -> dict | None:
+    """Return a cache entry, or None if missing, corrupt, or in an old format."""
     path = CACHE_DIR / key
     if path.exists():
         try:
-            return json.loads(path.read_text())
+            entry = json.loads(path.read_text())
         except (json.JSONDecodeError, OSError):
             logger.warning("Corrupt cache file: %s", path)
             return None
+        if isinstance(entry, dict) and entry.get("v") == CACHE_VERSION:
+            return entry
+        return None  # pre-v2 files held raw, unvalidated OMDb responses
     return None
 
 
-def _write_cache(key: str, data: dict) -> None:
+def _write_cache(key: str, data: dict | None) -> None:
+    """Cache a validated OMDb result, or None for "not found"."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    entry = {"v": CACHE_VERSION, "cached_at": time.time(), "data": data}
     try:
-        (CACHE_DIR / key).write_text(json.dumps(data))
+        (CACHE_DIR / key).write_text(json.dumps(entry))
     except OSError:
         logger.warning("Could not write cache file: %s", key)
 
@@ -68,9 +102,66 @@ def _clean_title_for_search(title: str) -> str:
     return t
 
 
+_LEADING_ARTICLE = re.compile(r"^(the|a|an)\s+")
+
+
+def _identity_title(title: str) -> str:
+    """Normalize a title for identity checks.
+
+    Like normalize_title but keeps leading articles: "The Drama" and
+    "Drama" are different films.
+    """
+    t = unicodedata.normalize("NFKD", title)
+    t = "".join(c for c in t if not unicodedata.combining(c))
+    t = t.lower()
+    t = re.sub(r"[^\w\s]", "", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+def _cache_key(title: str, year: int | None) -> str:
+    # Articles are kept so "The Drama" and "Drama" do not share an entry
+    raw = f"{_identity_title(title)}|{year or ''}"
+    return hashlib.md5(raw.encode()).hexdigest() + ".json"
+
+
 def _title_similarity(a: str, b: str) -> float:
-    """Compute similarity ratio between two normalized titles."""
-    return SequenceMatcher(None, normalize_title(a), normalize_title(b)).ratio()
+    """Compute similarity ratio between two titles (articles kept)."""
+    return SequenceMatcher(None, _identity_title(a), _identity_title(b)).ratio()
+
+
+def _year_from(value: object) -> int | None:
+    """Pull a 4-digit year out of '2026', '2019–2020', '2026-03-01', 2026, etc."""
+    if value is None:
+        return None
+    match = re.search(r"(19|20)\d{2}", str(value))
+    return int(match.group(0)) if match else None
+
+
+def _is_same_film(
+    title: str,
+    year: int | None,
+    candidate_title: str,
+    candidate_year: int | None,
+) -> bool:
+    """Decide whether a search result is the film we asked about.
+
+    - Titles must be at least MIN_TITLE_SIMILARITY alike, articles included.
+    - Titles that differ only by a leading article are different films.
+    - When both years are known they must be within YEAR_TOLERANCE, which
+      keeps remakes and older films of the same name apart.
+    """
+    a = _identity_title(title)
+    b = _identity_title(candidate_title)
+    if not a or not b:
+        return False
+    if a != b and _LEADING_ARTICLE.sub("", a) == _LEADING_ARTICLE.sub("", b):
+        return False
+    if SequenceMatcher(None, a, b).ratio() < MIN_TITLE_SIMILARITY:
+        return False
+    if year and candidate_year and abs(year - candidate_year) > YEAR_TOLERANCE:
+        return False
+    return True
 
 
 def _parse_scores(data: dict) -> Scores:
@@ -107,7 +198,7 @@ def fetch_omdb(
     if year:
         params["y"] = str(year)
 
-    response = s.get(OMDB_API_URL, params=params, timeout=15)
+    response = s.get(OMDB_API_URL, params=params, timeout=_TIMEOUT)
     response.raise_for_status()
     return response.json()
 
@@ -125,6 +216,57 @@ def _apply_metadata(film: Film, data: dict) -> None:
             film.logline = logline_from_omdb
 
 
+def _lookup_omdb(
+    title: str,
+    year: int | None,
+    api_key: str,
+    session: requests.Session | None = None,
+) -> tuple[dict | None, bool]:
+    """Search OMDb by title (+ year, then without year) and validate the result.
+
+    Returns (data, definitive). data is an OMDb response that passed the
+    title/year check, or None. definitive is False when OMDb answered with an
+    error other than "not found" (rate limit, bad key...), so the caller must
+    not cache the outcome.
+    """
+    definitive = True
+    query_years = [year, None] if year else [None]
+    for query_year in query_years:
+        data = fetch_omdb(title, query_year, api_key, session)
+        if data.get("Response") != "True":
+            error = data.get("Error", "")
+            if error == "Movie not found!":
+                logger.info("OMDb: no result for %r (year=%s)", title, query_year)
+            else:
+                logger.warning("OMDb error for %r: %s", title, error or "unknown")
+                definitive = False
+            continue
+
+        returned_title = data.get("Title", "")
+        returned_year = _year_from(data.get("Year"))
+        if not _is_same_film(title, year, returned_title, returned_year):
+            logger.warning(
+                "Possible mismatch for %r (%s): OMDb returned %r (%s). Ignoring.",
+                title,
+                year,
+                returned_title,
+                returned_year,
+            )
+            continue
+
+        similarity = _title_similarity(title, returned_title)
+        if similarity < 0.85:
+            logger.info(
+                "Weak match for %r: OMDb returned %r (similarity=%.2f). Accepting cautiously.",
+                title,
+                returned_title,
+                similarity,
+            )
+        return data, True
+
+    return None, definitive
+
+
 def enrich_film(
     film: Film,
     api_key: str,
@@ -139,52 +281,33 @@ def enrich_film(
     clean_title = _clean_title_for_search(film.title)
     cache_key = _cache_key(clean_title, film.year)
 
-    # Check cache first
+    # Check cache first. Positive entries are re-validated (the rules may have
+    # changed since they were written); negative entries expire.
     cached = _read_cache(cache_key)
     if cached is not None:
-        if cached.get("Response") == "True":
-            film.scores = _parse_scores(cached)
-            _apply_metadata(film, cached)
+        data = cached.get("data")
+        if data is None:
+            age = time.time() - cached.get("cached_at", 0)
+            if age < NEGATIVE_CACHE_TTL:
+                film.scores = Scores()
+                logger.debug("Cache hit (not found) for %r", film.title)
+                return
+            logger.debug("Expired not-found cache entry for %r; retrying OMDb", film.title)
+        elif _is_same_film(clean_title, film.year, data.get("Title", ""), _year_from(data.get("Year"))):
+            film.scores = _parse_scores(data)
+            _apply_metadata(film, data)
             logger.debug("Cache hit for %r", film.title)
-        else:
-            film.scores = Scores()
-            logger.debug("Cache hit (not found) for %r", film.title)
-        return
-
-    # Fetch from OMDb
-    data = fetch_omdb(clean_title, film.year, api_key, session)
-    _write_cache(cache_key, data)
-
-    if data.get("Response") != "True":
-        logger.info("OMDb: no result for %r (year=%s)", clean_title, film.year)
-        # Try again without year if we had one
-        if film.year:
-            data = fetch_omdb(clean_title, None, api_key, session)
-            _write_cache(_cache_key(clean_title, None), data)
-        if data.get("Response") != "True":
-            film.scores = Scores()
             return
+        else:
+            logger.info("Cached OMDb result for %r failed the title check; refetching", film.title)
 
-    # Check for title mismatch
-    returned_title = data.get("Title", "")
-    similarity = _title_similarity(clean_title, returned_title)
-    if similarity < 0.6:
-        logger.warning(
-            "Possible mismatch for %r: OMDb returned %r (similarity=%.2f). Using N/A.",
-            film.title,
-            returned_title,
-            similarity,
-        )
+    data, definitive = _lookup_omdb(clean_title, film.year, api_key, session)
+    if definitive:
+        _write_cache(cache_key, data)
+
+    if data is None:
         film.scores = Scores()
         return
-
-    if similarity < 0.85:
-        logger.info(
-            "Weak match for %r: OMDb returned %r (similarity=%.2f). Accepting cautiously.",
-            film.title,
-            returned_title,
-            similarity,
-        )
 
     film.scores = _parse_scores(data)
     _apply_metadata(film, data)
@@ -204,27 +327,36 @@ def _fetch_tmdb(
     if year:
         params["year"] = str(year)
 
-    resp = session.get(f"{TMDB_API_URL}/search/movie", params=params, timeout=15)
+    resp = session.get(f"{TMDB_API_URL}/search/movie", params=params, timeout=_TIMEOUT)
     resp.raise_for_status()
     results = resp.json().get("results", [])
     if not results:
         if year:
-            # Retry without year
+            # Retry without year (the year check below still applies)
             params.pop("year")
-            resp = session.get(f"{TMDB_API_URL}/search/movie", params=params, timeout=15)
+            resp = session.get(f"{TMDB_API_URL}/search/movie", params=params, timeout=_TIMEOUT)
             resp.raise_for_status()
             results = resp.json().get("results", [])
         if not results:
             return None
 
-    # Pick the best match by title similarity
-    best = max(results[:5], key=lambda r: _title_similarity(title, r.get("title", "")))
-    sim = _title_similarity(title, best.get("title", ""))
-    if sim < 0.6:
-        logger.info("TMDB: no good match for %r (best=%r, sim=%.2f)", title, best.get("title"), sim)
+    matches = [
+        r
+        for r in results[:10]
+        if _is_same_film(title, year, r.get("title", ""), _year_from(r.get("release_date")))
+    ]
+    if not matches:
+        logger.info("TMDB: no good match for %r (%s)", title, year)
         return None
 
-    return best
+    # Prefer an exact year match, then the closest title
+    return max(
+        matches,
+        key=lambda r: (
+            year is not None and _year_from(r.get("release_date")) == year,
+            _title_similarity(title, r.get("title", "")),
+        ),
+    )
 
 
 def _fetch_omdb_by_imdb_id(
@@ -234,7 +366,7 @@ def _fetch_omdb_by_imdb_id(
 ) -> dict:
     """Query OMDb by IMDb ID for full scores."""
     params: dict[str, str] = {"apikey": api_key, "i": imdb_id, "type": "movie"}
-    resp = session.get(OMDB_API_URL, params=params, timeout=15)
+    resp = session.get(OMDB_API_URL, params=params, timeout=_TIMEOUT)
     resp.raise_for_status()
     return resp.json()
 
@@ -259,7 +391,7 @@ def _enrich_via_tmdb_imdb(
     detail_resp = session.get(
         f"{TMDB_API_URL}/movie/{tmdb_id}/external_ids",
         params={"api_key": tmdb_key},
-        timeout=15,
+        timeout=_TIMEOUT,
     )
     detail_resp.raise_for_status()
     imdb_id = detail_resp.json().get("imdb_id")
@@ -312,7 +444,7 @@ def _find_imdb_id(
     first_char = query[0] if query else "a"
     url = f"{IMDB_SUGGEST_URL}/{first_char}/{query}.json"
 
-    resp = session.get(url, headers=_BROWSER_HEADERS, timeout=10)
+    resp = session.get(url, headers=_BROWSER_HEADERS, timeout=_TIMEOUT)
     if resp.status_code != 200:
         return None
 
@@ -322,19 +454,16 @@ def _find_imdb_id(
     if not movies:
         return None
 
-    # If year specified, prefer exact match
-    if year:
-        for m in movies:
-            if m.get("y") == year:
-                sim = _title_similarity(title, m.get("l", ""))
-                if sim >= 0.6:
-                    return m["id"]
+    matches = [m for m in movies if _is_same_film(title, year, m.get("l", ""), m.get("y"))]
+    if not matches:
+        return None
 
-    # Otherwise take best title match
-    best = max(movies[:5], key=lambda r: _title_similarity(title, r.get("l", "")))
-    if _title_similarity(title, best.get("l", "")) >= 0.6:
-        return best["id"]
-    return None
+    # Prefer an exact year match, then the closest title
+    best = max(
+        matches,
+        key=lambda m: (year is not None and m.get("y") == year, _title_similarity(title, m.get("l", ""))),
+    )
+    return best["id"]
 
 
 def _fetch_imdb_rating(
@@ -349,7 +478,7 @@ def _fetch_imdb_rating(
         IMDB_GRAPHQL_URL,
         json={"query": query},
         headers={**_BROWSER_HEADERS, "content-type": "application/json"},
-        timeout=10,
+        timeout=_TIMEOUT,
     )
     if resp.status_code != 200:
         return None
@@ -406,20 +535,25 @@ def _mc_slug(title: str) -> str:
 def _fetch_mc_score(
     title: str, year: int | None, session: requests.Session
 ) -> tuple[int | None, str | None]:
-    """Fetch Metacritic score from the movie page. Returns (score, slug)."""
-    # Try with title as slug, then with year suffix for disambiguation
+    """Fetch Metacritic score from the movie page. Returns (score, slug).
+
+    Each candidate page is checked against the title and year from its
+    JSON-LD, so a same-title older film is not picked up.
+    """
     slug = _mc_slug(title)
     # Also try without leading article for edge cases
     slug_no_article = re.sub(r"^(the|a|an)-", "", slug)
-    candidates = [slug]
+    candidates = []
     if year:
+        # Metacritic disambiguates newer same-title films with a year suffix
         candidates.append(f"{slug}-{year}")
+    candidates.append(slug)
     if slug_no_article != slug:
         candidates.append(slug_no_article)
 
     for candidate in candidates:
         url = f"{MC_MOVIE_URL}/{candidate}/"
-        resp = session.get(url, headers=_BROWSER_HEADERS, timeout=10)
+        resp = session.get(url, headers=_BROWSER_HEADERS, timeout=_TIMEOUT)
         if resp.status_code != 200:
             continue
 
@@ -428,6 +562,11 @@ def _fetch_mc_score(
             try:
                 data = json.loads(script.string)
                 if not isinstance(data, dict):
+                    continue
+                page_title = data.get("name")
+                page_year = _year_from(data.get("datePublished"))
+                if page_title and not _is_same_film(title, year, page_title, page_year):
+                    logger.debug("MC: %s is %r (%s), not %r (%s)", candidate, page_title, page_year, title, year)
                     continue
                 rating = data.get("aggregateRating", {})
                 score = rating.get("ratingValue")
@@ -479,7 +618,7 @@ def _find_rt_slug(title: str, year: int | None, session: requests.Session) -> st
         RT_SEARCH_URL,
         params={"search": query},
         headers=_RT_HEADERS,
-        timeout=15,
+        timeout=_TIMEOUT,
     )
     if resp.status_code != 200:
         return None
@@ -493,9 +632,11 @@ def _find_rt_slug(title: str, year: int | None, session: requests.Session) -> st
             # Extract the /m/slug portion
             idx = href.index("/m/")
             slug = href[idx:]
-            # Check the link text roughly matches our title
+            # Check the link text (and release year, when shown) match our film
             link_text = a_tag.get_text(strip=True)
-            if link_text and _title_similarity(title, link_text) >= 0.6:
+            row = a_tag.find_parent("search-page-media-row")
+            release_year = _year_from(row.get("release-year")) if row else None
+            if link_text and _is_same_film(title, year, link_text, release_year):
                 return slug
     return None
 
@@ -508,7 +649,7 @@ def _scrape_rt_scores(slug: str, session: requests.Session) -> tuple[int | None,
     resp = session.get(
         f"{RT_BASE}{slug}",
         headers=_RT_HEADERS,
-        timeout=15,
+        timeout=_TIMEOUT,
     )
     if resp.status_code != 200:
         return None, None
@@ -584,7 +725,7 @@ def _fetch_imdb_plot(imdb_id: str, session: requests.Session) -> str | None:
             IMDB_GRAPHQL_URL,
             json={"query": query},
             headers={**_BROWSER_HEADERS, "content-type": "application/json"},
-            timeout=10,
+            timeout=_TIMEOUT,
         )
         if resp.status_code != 200:
             return None
@@ -616,38 +757,37 @@ def _is_real_logline(text: str) -> bool:
     return not any(f in lower for f in filler)
 
 
-def _enrich_loglines(films: list[Film], session: requests.Session) -> None:
-    """For films with long loglines, check IMDb for a shorter alternative."""
-    for film in films:
-        if film.logline and len(film.logline) <= LOGLINE_CAP:
-            continue  # already short enough
+def _enrich_logline(film: Film, session: requests.Session) -> None:
+    """For a film with a long logline, check IMDb for a shorter alternative."""
+    if film.logline and len(film.logline) <= LOGLINE_CAP:
+        return  # already short enough
 
-        candidates: list[str] = []
-        if film.logline and _is_real_logline(film.logline):
-            candidates.append(film.logline)
+    candidates: list[str] = []
+    if film.logline and _is_real_logline(film.logline):
+        candidates.append(film.logline)
 
-        # Best source: IMDb plot (concise, always a real synopsis)
-        if film.scores and film.scores.imdb_id:
-            alt = _fetch_imdb_plot(film.scores.imdb_id, session)
-            if alt and _is_real_logline(alt):
-                candidates.append(alt)
+    # Best source: IMDb plot (concise, always a real synopsis)
+    if film.scores and film.scores.imdb_id:
+        alt = _fetch_imdb_plot(film.scores.imdb_id, session)
+        if alt and _is_real_logline(alt):
+            candidates.append(alt)
 
-        if not candidates:
-            continue
+    if not candidates:
+        return
 
-        # Prefer one that fits the cap; if none fit, take shortest
-        under_cap = [c for c in candidates if len(c) <= LOGLINE_CAP]
-        if under_cap:
-            film.logline = max(under_cap, key=len)
-        else:
-            film.logline = min(candidates, key=len)
+    # Prefer one that fits the cap; if none fit, take shortest
+    under_cap = [c for c in candidates if len(c) <= LOGLINE_CAP]
+    if under_cap:
+        film.logline = max(under_cap, key=len)
+    else:
+        film.logline = min(candidates, key=len)
 
-        logger.debug(
-            "Logline for %r: %d chars %s",
-            film.title,
-            len(film.logline),
-            "(OK)" if len(film.logline) <= LOGLINE_CAP else "(long)",
-        )
+    logger.debug(
+        "Logline for %r: %d chars %s",
+        film.title,
+        len(film.logline),
+        "(OK)" if len(film.logline) <= LOGLINE_CAP else "(long)",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -660,7 +800,7 @@ def _fetch_ph_film_codes(session: requests.Session) -> dict[str, tuple[str, str]
 
     Returns dict mapping normalized title -> (ho_code, slug).
     """
-    resp = session.get(PH_WHATS_ON_URL, headers=_BROWSER_HEADERS, timeout=15)
+    resp = session.get(PH_WHATS_ON_URL, headers=_BROWSER_HEADERS, timeout=_TIMEOUT)
     if resp.status_code != 200:
         logger.warning("Failed to fetch PH whats-on: %d", resp.status_code)
         return {}
@@ -701,80 +841,160 @@ def _enrich_ph_links(films: list[Film], session: requests.Session) -> None:
             logger.debug("PH: no match for %r", film.title)
 
 
+def _enrich_tmdb_fallback(
+    film: Film,
+    omdb_key: str,
+    tmdb_key: str,
+    session: requests.Session,
+) -> None:
+    """TMDB → IMDb ID → OMDb, then basic TMDB data, for films with no scores yet."""
+    scores = film.scores
+    has_any = scores and (
+        scores.metacritic is not None
+        or scores.imdb is not None
+        or scores.rotten_tomatoes is not None
+    )
+    if has_any:
+        return
+
+    found = _enrich_via_tmdb_imdb(film, omdb_key, tmdb_key, session)
+    if not found:
+        # Fall back to basic TMDB data (vote_average as IMDb-style)
+        clean = _clean_title_for_search(film.title)
+        tmdb_data = _fetch_tmdb(clean, film.year, tmdb_key, session)
+        if tmdb_data:
+            _apply_tmdb_data(film, tmdb_data)
+            logger.info("TMDB fallback enriched %r", film.title)
+
+
+def _expired(deadline: float | None) -> bool:
+    return deadline is not None and time.monotonic() >= deadline
+
+
+def _enrich_one(
+    film: Film,
+    api_key: str,
+    tmdb_api_key: str,
+    session: requests.Session,
+    deadline: float | None,
+) -> Film:
+    """Run every score source for one film, stopping early at the deadline.
+
+    Each source's failure is logged and skipped. If the deadline passes before
+    a score source was tried, the film is marked scores_incomplete.
+    """
+    # (name, is_score_source, step)
+    steps: list[tuple[str, bool, object]] = []
+    if api_key:
+        steps.append(("OMDb", True, lambda: enrich_film(film, api_key, session=session)))
+        if tmdb_api_key:
+            steps.append(
+                ("TMDB", True, lambda: _enrich_tmdb_fallback(film, api_key, tmdb_api_key, session))
+            )
+    steps += [
+        ("IMDb", True, lambda: _enrich_from_imdb(film, session)),
+        ("Metacritic", True, lambda: _enrich_from_mc(film, session)),
+        ("Rotten Tomatoes", True, lambda: _enrich_from_rt(film, session)),
+        ("logline", False, lambda: _enrich_logline(film, session)),
+    ]
+
+    for name, is_score_source, step in steps:
+        if _expired(deadline):
+            if is_score_source:
+                film.scores_incomplete = True
+                logger.warning("Time budget used up before %s lookup for %r", name, film.title)
+            break
+        try:
+            step()
+        except Exception:
+            logger.exception("%s lookup failed for %r", name, film.title)
+
+    if film.scores is None:
+        film.scores = Scores()
+    return film
+
+
+def _copy_enrichment(src: Film, dst: Film) -> None:
+    dst.scores = src.scores
+    dst.director = src.director
+    dst.logline = src.logline
+    dst.scores_incomplete = src.scores_incomplete
+
+
+def _mark_incomplete(film: Film) -> None:
+    if film.scores is None:
+        film.scores = Scores()
+    film.scores_incomplete = True
+
+
+def _enrich_concurrently(
+    films: list[Film],
+    api_key: str,
+    tmdb_api_key: str,
+    deadline: float | None,
+    max_workers: int,
+) -> None:
+    """Enrich films in parallel, each worker on a copy with its own session.
+
+    Results are copied back only for films that finished before the deadline;
+    the rest are marked scores_incomplete. Stragglers are abandoned (they stop
+    at their next deadline check, within one request timeout).
+    """
+
+    def work(film: Film) -> Film:
+        return _enrich_one(copy.deepcopy(film), api_key, tmdb_api_key, _thread_session(), deadline)
+
+    executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="enrich")
+    try:
+        futures = {executor.submit(work, film): film for film in films}
+        timeout = None if deadline is None else max(0.0, deadline - time.monotonic())
+        done, _ = wait(futures, timeout=timeout)
+        for future, film in futures.items():
+            if future in done and future.exception() is None:
+                _copy_enrichment(future.result(), film)
+            else:
+                _mark_incomplete(film)
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
 def enrich_films(
     films: list[Film],
     api_key: str,
     tmdb_api_key: str = "",
     session: requests.Session | None = None,
+    time_budget: float | None = None,
+    max_workers: int = DEFAULT_MAX_WORKERS,
 ) -> None:
-    """Enrich all films with scores. Failures are logged but do not propagate."""
-    s = session or _make_session()
+    """Enrich all films with scores. Failures are logged but do not propagate.
+
+    time_budget (seconds) caps the whole enrichment: films whose lookups did
+    not finish in time keep whatever they have and are marked
+    scores_incomplete. With an explicit session (or max_workers=1) films are
+    processed one at a time on that session; otherwise up to max_workers
+    films are looked up concurrently.
+    """
+    deadline = time.monotonic() + time_budget if time_budget is not None else None
 
     if not api_key:
         logger.warning("No OMDb API key configured; OMDb scores will be N/A")
+
+    if session is not None or max_workers <= 1:
+        s = session or _make_session()
         for film in films:
-            film.scores = Scores()
+            if _expired(deadline):
+                _mark_incomplete(film)
+                continue
+            _enrich_one(film, api_key, tmdb_api_key, s, deadline)
     else:
-        for film in films:
-            try:
-                enrich_film(film, api_key, session=s)
-            except Exception:
-                logger.exception("Failed to enrich %r", film.title)
-                film.scores = Scores()
-
-        # TMDB→IMDB ID→OMDb pass: find films on TMDB, get IMDB ID, look up full scores
-        if tmdb_api_key:
-            for film in films:
-                scores = film.scores
-                has_any = scores and (
-                    scores.metacritic is not None
-                    or scores.imdb is not None
-                    or scores.rotten_tomatoes is not None
-                )
-                if has_any:
-                    continue
-                try:
-                    found = _enrich_via_tmdb_imdb(film, api_key, tmdb_api_key, s)
-                    if not found:
-                        # Fall back to basic TMDB data (vote_average as IMDb-style)
-                        clean = _clean_title_for_search(film.title)
-                        tmdb_data = _fetch_tmdb(clean, film.year, tmdb_api_key, s)
-                        if tmdb_data:
-                            _apply_tmdb_data(film, tmdb_data)
-                            logger.info("TMDB fallback enriched %r", film.title)
-                except Exception:
-                    logger.exception("TMDB fallback failed for %r", film.title)
-
-    # Direct scraping passes — always run, no API keys needed
-    # IMDb: get ID + rating
-    for film in films:
-        try:
-            _enrich_from_imdb(film, s)
-        except Exception:
-            logger.exception("IMDb scrape failed for %r", film.title)
-
-    # Metacritic: get score from movie page
-    for film in films:
-        if film.scores and film.scores.metacritic is not None:
-            continue
-        try:
-            _enrich_from_mc(film, s)
-        except Exception:
-            logger.exception("MC scrape failed for %r", film.title)
-
-    # RT: get tomatometer + slug
-    for film in films:
-        if film.scores is None:
-            film.scores = Scores()
-        if film.scores.rotten_tomatoes is not None:
-            continue
-        try:
-            _enrich_from_rt(film, s)
-        except Exception:
-            logger.exception("RT scrape failed for %r", film.title)
-
-    # Logline fallback — check alternative sources for long loglines
-    _enrich_loglines(films, s)
+        _enrich_concurrently(films, api_key, tmdb_api_key, deadline, max_workers)
 
     # Picturehouse booking links
-    _enrich_ph_links(films, s)
+    if _expired(deadline):
+        logger.warning("Skipping Picturehouse film links: time budget used up")
+    else:
+        _enrich_ph_links(films, session or _make_session())
+
+    incomplete = sum(1 for f in films if f.scores_incomplete)
+    if incomplete:
+        logger.warning("Scores incomplete for %d film(s): time budget used up", incomplete)

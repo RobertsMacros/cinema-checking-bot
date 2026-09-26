@@ -1,5 +1,12 @@
-"""Shared test fixtures."""
+"""Shared test fixtures.
 
+Unit tests run offline: any attempt to open a network connection fails the
+test. Live integration tests (marked `integration`) are skipped unless asked
+for with `pytest -m integration` or RUN_INTEGRATION=1.
+"""
+
+import os
+import socket
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -8,6 +15,44 @@ import pytest
 from cinema_digest.models import Film, Scores, Screening
 
 LONDON_TZ = ZoneInfo("Europe/London")
+
+
+def _integration_requested(config) -> bool:
+    if os.environ.get("RUN_INTEGRATION", "").lower() in ("1", "true", "yes"):
+        return True
+    return "integration" in (config.getoption("-m") or "")
+
+
+def pytest_collection_modifyitems(config, items):
+    if _integration_requested(config):
+        return
+    skip = pytest.mark.skip(reason="live test: run with -m integration or RUN_INTEGRATION=1")
+    for item in items:
+        if "integration" in item.keywords:
+            item.add_marker(skip)
+
+
+@pytest.fixture(autouse=True)
+def _block_network(request, monkeypatch):
+    """Fail any unit test that tries to reach the network.
+
+    The code under test swallows most errors (by design), so attempts are
+    recorded and checked after the test rather than relying on the raise.
+    """
+    if "integration" in request.keywords:
+        yield
+        return
+
+    attempts = []
+
+    def guard(*args, **kwargs):
+        attempts.append(args[1:] or args)
+        raise OSError("network access blocked in unit tests")
+
+    monkeypatch.setattr(socket.socket, "connect", guard)
+    monkeypatch.setattr(socket, "create_connection", guard)
+    yield
+    assert not attempts, f"unit test tried to open network connections: {attempts}"
 
 
 @pytest.fixture

@@ -41,3 +41,15 @@ class Film:
     ph_url: str | None = None  # Picturehouse movie-details page
     screenings: list[Screening] = field(default_factory=list)
     scores: Scores | None = None
+    # True when enrichment ran out of time before every score source was tried
+    scores_incomplete: bool = False
+
+
+@dataclass
+class ScrapeResult:
+    """Films scraped from all cinemas, plus anything worth flagging in the digest."""
+
+    films: list[Film] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    # True when a failure suggests the listings are wrong (fetch failed, no showtimes)
+    listings_suspect: bool = False

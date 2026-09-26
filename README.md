@@ -9,17 +9,20 @@ Automatically fetches upcoming film listings from Clapham Picturehouse and Ritzy
 1. Scrapes film listings from [Data Thistle](https://film.datathistle.com/) for both cinemas
 2. Filters showtimes to evenings (weekdays 18:00-21:30, weekends 11:00-21:30)
 3. Enriches each film with Metacritic, IMDb, and Rotten Tomatoes scores via [OMDb API](https://www.omdbapi.com/)
-4. Formats a clean, alphabetised digest
-5. Emails the result (or prints it in dry-run mode)
+4. Formats a digest ordered by Metacritic score (highest first; unscored films last, alphabetically)
+5. Emails the result (or prints it in dry-run mode). A digest is always sent: if the listings look broken, it says so at the top and the subject line is flagged
 
 ## Setup
 
 ```bash
-cd cinema-digest
-pip install -r requirements.txt
+cd cinema-checking-bot
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 cp .env.example .env
 # Edit .env with your credentials
 ```
+
+The scheduling examples below run `.venv/bin/python`, so the scheduled job uses the interpreter that has the dependencies installed.
 
 ### Required credentials
 
@@ -28,7 +31,7 @@ cp .env.example .env
 | `OMDB_API_KEY` | Free API key from [omdbapi.com](https://www.omdbapi.com/apikey.aspx) (1000 requests/day) |
 | `TMDB_API_KEY` | Free API key from [themoviedb.org](https://www.themoviedb.org/settings/api) (fallback for score lookups) |
 | `SMTP_HOST` | SMTP server (default: `smtp.gmail.com`) |
-| `SMTP_PORT` | SMTP port (default: `587`) |
+| `SMTP_PORT` | SMTP port (default: `587`). `465` uses implicit TLS; any other port uses STARTTLS. If the configured port fails before the message is sent, the other method is tried once (465 or 587). |
 | `SMTP_USER` | SMTP username |
 | `SMTP_PASSWORD` | SMTP password or app-specific password |
 | `EMAIL_FROM` | Sender email address |
@@ -59,13 +62,21 @@ python -m cinema_digest.main --dry-run -v
 ## Running tests
 
 ```bash
-pip install -r requirements-dev.txt
-pytest tests/ -v
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest tests/ -v
+```
+
+Unit tests run offline (any network access fails the test). The live tests against Data Thistle are skipped unless you ask for them:
+
+```bash
+.venv/bin/python -m pytest -m integration      # or: RUN_INTEGRATION=1 pytest tests/
 ```
 
 ## Hosting locally
 
 The script is designed to run unattended on a schedule. It does not need a web server or the computer to be logged in -- it just needs the machine to be powered on and connected to the internet.
+
+All the examples run weekly on Tuesday at 18:00 London time, matching the GitHub Actions schedule (Option 6). Replace `/path/to/cinema-checking-bot` with the real path.
 
 ### Option 1: cron (Linux / macOS)
 
@@ -73,17 +84,26 @@ The script is designed to run unattended on a schedule. It does not need a web s
 crontab -e
 ```
 
-Add a line to run at 07:00 London time. Since cron uses the system timezone, adjust if your machine is not set to Europe/London:
+cron uses the system timezone; adjust the hour if your machine is not set to Europe/London:
 
 ```cron
-0 7 * * * cd /path/to/cinema-digest && /usr/bin/python3 -m cinema_digest.main >> /var/log/cinema-digest.log 2>&1
+0 18 * * 2 cd /path/to/cinema-checking-bot && .venv/bin/python -m cinema_digest.main >> "$HOME/cinema-digest.log" 2>&1
 ```
+
+Log to a file your user can write (as above). If the shell cannot open the redirect target (e.g. `/var/log/...` for a normal user), cron does not run the command at all. On macOS, cron may also need Full Disk Access if the repo is under `~/Documents` or `~/Desktop`.
 
 cron runs whether or not you are logged in, as long as the machine is on.
 
 ### Option 2: launchd (macOS)
 
-Create `~/Library/LaunchDaemons/com.cinema-digest.plist` (use LaunchDaemons, not LaunchAgents, so it runs even when not logged in):
+launchd reads jobs from two places:
+
+- `/Library/LaunchDaemons/` — system jobs; they run at boot whether or not anyone is logged in. The plist must be owned by `root:wheel` with mode `644`. Use the `UserName` key so the job runs as you, not root.
+- `~/Library/LaunchAgents/` — per-user jobs; they run only while you are logged in. Leave out `UserName`.
+
+(`~/Library/LaunchDaemons/` is not a location launchd reads, so a plist there never runs after a reboot.)
+
+Create `/Library/LaunchDaemons/com.cinema-digest.plist`:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -92,30 +112,29 @@ Create `~/Library/LaunchDaemons/com.cinema-digest.plist` (use LaunchDaemons, not
 <dict>
     <key>Label</key>
     <string>com.cinema-digest</string>
+    <key>UserName</key>
+    <string>your-macos-username</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/bin/python3</string>
+        <string>/path/to/cinema-checking-bot/.venv/bin/python</string>
         <string>-m</string>
         <string>cinema_digest.main</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/path/to/cinema-digest</string>
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin</string>
-    </dict>
+    <string>/path/to/cinema-checking-bot</string>
     <key>StartCalendarInterval</key>
     <dict>
+        <key>Weekday</key>
+        <integer>2</integer>
         <key>Hour</key>
-        <integer>7</integer>
+        <integer>18</integer>
         <key>Minute</key>
         <integer>0</integer>
     </dict>
     <key>StandardOutPath</key>
-    <string>/tmp/cinema-digest.log</string>
+    <string>/Users/your-macos-username/Library/Logs/cinema-digest.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/cinema-digest.log</string>
+    <string>/Users/your-macos-username/Library/Logs/cinema-digest.log</string>
 </dict>
 </plist>
 ```
@@ -123,10 +142,12 @@ Create `~/Library/LaunchDaemons/com.cinema-digest.plist` (use LaunchDaemons, not
 Load it:
 
 ```bash
-sudo launchctl load ~/Library/LaunchDaemons/com.cinema-digest.plist
+sudo chown root:wheel /Library/LaunchDaemons/com.cinema-digest.plist
+sudo chmod 644 /Library/LaunchDaemons/com.cinema-digest.plist
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.cinema-digest.plist
 ```
 
-Note: LaunchDaemons run as root and persist across logouts and reboots. If you prefer user-level (runs only when logged in), use `~/Library/LaunchAgents/` instead.
+If a Mac is asleep at 18:00 on Tuesday, launchd runs the job when it wakes.
 
 ### Option 3: systemd (Linux)
 
@@ -140,19 +161,20 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=/path/to/cinema-digest
-ExecStart=/usr/bin/python3 -m cinema_digest.main
-EnvironmentFile=/path/to/cinema-digest/.env
+User=your-username
+WorkingDirectory=/path/to/cinema-checking-bot
+ExecStart=/path/to/cinema-checking-bot/.venv/bin/python -m cinema_digest.main
+EnvironmentFile=/path/to/cinema-checking-bot/.env
 ```
 
 Create `/etc/systemd/system/cinema-digest.timer`:
 
 ```ini
 [Unit]
-Description=Run Cinema Digest daily
+Description=Run Cinema Digest weekly
 
 [Timer]
-OnCalendar=*-*-* 07:00:00
+OnCalendar=Tue *-*-* 18:00:00 Europe/London
 Persistent=true
 
 [Install]
@@ -163,23 +185,23 @@ Enable and start:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable cinema-digest.timer
-sudo systemctl start cinema-digest.timer
+sudo systemctl enable --now cinema-digest.timer
+systemctl list-timers cinema-digest.timer   # check the next run time
 ```
 
 systemd timers run whether or not a user is logged in. `Persistent=true` ensures a missed run (e.g. machine was off) fires when the machine comes back online.
 
 ### Option 4: Task Scheduler (Windows)
 
-Create a scheduled task that runs daily at 07:00:
+Create a scheduled task that runs every Tuesday at 18:00:
 
 ```powershell
 $action = New-ScheduledTaskAction `
-    -Execute "python" `
+    -Execute "C:\path\to\cinema-checking-bot\.venv\Scripts\python.exe" `
     -Argument "-m cinema_digest.main" `
     -WorkingDirectory "C:\path\to\cinema-checking-bot"
 
-$trigger = New-ScheduledTaskTrigger -Daily -At 7:00AM
+$trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Tuesday -At 6:00PM
 
 $settings = New-ScheduledTaskSettingsSet `
     -StartWhenAvailable `
@@ -190,7 +212,7 @@ Register-ScheduledTask `
     -Action $action `
     -Trigger $trigger `
     -Settings $settings `
-    -Description "Daily cinema digest email"
+    -Description "Weekly cinema digest email"
 ```
 
 `-StartWhenAvailable` ensures a missed run (e.g. laptop was asleep) fires when the machine wakes up. The task runs whether or not you are logged in if you configure it under "Run whether user is logged on or not" in the Task Scheduler GUI.
@@ -201,17 +223,25 @@ If your local machine is not always on, run this on a cheap Linux VM (e.g. a fre
 
 ### Option 6: GitHub Actions
 
-If this repo is pushed to GitHub, the included workflow at `.github/workflows/cinema_digest.yml` runs daily at 06:00 UTC (07:00 BST / 06:00 GMT). Add your secrets in the repo's Settings > Secrets and variables > Actions.
+If this repo is pushed to GitHub, the included workflow at `.github/workflows/cinema_digest.yml` runs **weekly on Tuesday at 17:00 UTC** (18:00 BST in summer, 17:00 GMT in winter). It can also be run by hand from the Actions tab. Add your secrets in the repo's Settings > Secrets and variables > Actions; secrets you leave undefined (e.g. `SMTP_PORT`) fall back to the defaults above.
+
+Notes:
+
+- GitHub often starts scheduled runs late, sometimes by an hour or more.
+- GitHub disables scheduled workflows in public repos after 60 days without repository activity. The workflow's last step re-enables itself through the API (using the built-in token, no commits) to prevent that. If the schedule has been disabled anyway, re-enable it from the Actions tab.
+- The run has an 8-minute time budget and always sends; score lookups that don't finish in time are marked in the digest. The job timeout (15 minutes) is only a backstop.
 
 ## Output format
 
 Each film appears as one line:
 
 ```
-- **Film Title** - logline - 83 / 7.4 / 91% - Clapham: Tue 18:10, Thu 20:30; Ritzy: Fri 19:00 - [Book at Ritzy](https://...)
+- **Film Title — dir. Director** - logline - 83 / 7.4 / 91% - Clapham: Tue 18:10; Thu 20:30 | Ritzy: Fri 19:00 - [Book](https://web.picturehouses.com/order/showtimes/020-12345/seats)
 ```
 
-Score order: Metacritic / IMDb / Rotten Tomatoes. N/A for unavailable scores.
+Score order: Metacritic / IMDb / Rotten Tomatoes. N/A for unavailable scores; "(scores not fetched (time limit))" if the run's time budget ran out before that film's lookups finished. Films are ordered by Metacritic score, highest first; films without a Metacritic score come last, alphabetically.
+
+The Book link goes to the booking page for the film's earliest qualifying screening. If that link isn't in Picturehouse's current booking format, it falls back to the film's Picturehouse page, then the cinema's page.
 
 ## Architecture
 
@@ -229,15 +259,14 @@ cinema_digest/
 
 ## Limitations
 
-- Data Thistle is a third-party scraping source. If they change their HTML structure, the scraper will need updating. The code validates minimum film counts to detect this.
+- Data Thistle is a third-party scraping source. If they change their HTML structure, the scraper will need updating. The digest is still sent, with a warning at the top and a flagged subject, when a listings page can't be fetched, when films are found but no showtimes can be read, or when nothing qualifies for the next 7 days. An unusually low film count (fewer than 3 at a cinema) is noted in the digest.
 - OMDb free tier is limited to 1000 API calls/day (more than enough for ~25 films).
 - OMDb does not always have scores for new or niche releases. These show as N/A.
 - The script does not detect sold-out or struck-through sessions (Data Thistle does not reliably expose this).
 
 ## Possible improvements
 
-- Add an OMDb cache expiry (currently cached forever; delete `.cache/` to refresh)
-- Persist the OMDb cache across GitHub Actions runs using `actions/cache`
+- Expire positive OMDb cache entries too (currently only "not found" results expire, after 7 days; delete `.cache/` to refresh scores)
 - Add Letterboxd scores as an alternative/supplement to OMDb
 - Support additional cinemas by adding URLs to `config.py`
 - HTML email with nicer formatting (tables, poster thumbnails)
