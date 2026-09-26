@@ -1,5 +1,7 @@
 # Cinema Digest
 
+**Roberts Macros: no macro too micro.**
+
 Automatically fetches upcoming film listings from Clapham Picturehouse and Ritzy Picturehouse (Brixton), enriches them with review scores, and emails a formatted digest.
 
 ## What it does
