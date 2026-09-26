@@ -172,6 +172,14 @@ class TestParseCinema:
         films = parse_cinema(html, "Ritzy", today=date(2026, 9, 26))
         assert len(films[0].screenings) == 1
 
+    def test_logline_keeps_spaces_around_inline_tags(self):
+        html = """
+        <h4><a href="/listing/3-play/">A Play</a></h4>
+        <div><ul><li>2026</li></ul><p><b>The Misanthrope</b> by Martin Crimp, after <i>Moli\u00e8re</i>.</p></div>
+        """
+        film = parse_cinema(html, "Clapham")[0]
+        assert film.logline == "The Misanthrope by Martin Crimp, after Moli\u00e8re."
+
     def test_duration_kept_without_year(self):
         html = """
         <h4><a href="/listing/2-no-year/">No Year Film</a></h4>

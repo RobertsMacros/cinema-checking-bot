@@ -108,12 +108,16 @@ def main() -> None:
     # 3. Enrich within the remaining time budget
     if filtered:
         remaining = RUN_TIME_BUDGET_SECONDS - (time.monotonic() - started) - SEND_RESERVE_SECONDS
-        enrich_films(
+        omdb_problems = enrich_films(
             filtered,
             config.omdb_api_key,
             tmdb_api_key=config.tmdb_api_key,
             time_budget=max(0.0, remaining),
-        )
+        ) or []
+        if all(f.scores is None or f.scores.imdb is None for f in filtered):
+            reason = "; ".join(omdb_problems) or "no film matched on OMDb or IMDb"
+            logger.warning("No IMDb scores this run: %s", reason)
+            notes.append(f"IMDb scores unavailable this week ({reason}).")
         incomplete = sum(1 for f in filtered if f.scores_incomplete)
         if incomplete:
             notes.append(

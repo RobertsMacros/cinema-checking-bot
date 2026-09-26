@@ -386,6 +386,22 @@ def _screened(title, **kwargs):
 
 
 class TestEnrichFilms:
+    def test_omdb_account_problems_are_returned(self, cache_dir):
+        for status, payload, expected in (
+            (401, {"Response": "False", "Error": "Invalid API key!"}, "OMDb rejected the API key: Invalid API key!"),
+            (200, {"Response": "False", "Error": "Request limit reached!"}, "OMDb said: Request limit reached!"),
+        ):
+            session = FakeSession({enrich_module.OMDB_API_URL: FakeResponse(status, payload)})
+            problems = enrich_films([_screened("A")], api_key="k", session=session)
+            assert problems == [expected]
+
+    def test_not_found_is_not_a_problem(self, cache_dir):
+        session = FakeSession({enrich_module.OMDB_API_URL: FakeResponse(200, {"Response": "False", "Error": "Movie not found!"})})
+        assert enrich_films([_screened("A")], api_key="k", session=session) == []
+
+    def test_missing_key_reported(self):
+        assert enrich_films([_screened("A")], api_key="", session=FakeSession()) == ["no OMDb API key is set"]
+
     def test_no_api_key_sets_all_empty(self):
         session = FakeSession()
         films = [_screened("A"), _screened("B")]

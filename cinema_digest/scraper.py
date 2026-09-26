@@ -238,7 +238,8 @@ def _parse_film_block(
 
         # Description paragraph (take first meaningful one as logline)
         if elem.name == "p" and logline is None:
-            text = elem.get_text(strip=True)
+            # A separator keeps words apart across inline tags (<b>, <i>, <a>).
+            text = re.sub(r"\s+([,.;:!?)])", r"\1", elem.get_text(" ", strip=True))
             if text and len(text) > 10:
                 logline = text
             continue

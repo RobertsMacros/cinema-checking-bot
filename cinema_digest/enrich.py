@@ -198,9 +198,34 @@ def fetch_omdb(
     if year:
         params["y"] = str(year)
 
-    response = s.get(OMDB_API_URL, params=params, timeout=_TIMEOUT)
+    try:
+        response = s.get(OMDB_API_URL, params=params, timeout=_TIMEOUT)
+    except requests.RequestException as e:
+        _note_omdb_problem(f"OMDb unreachable ({type(e).__name__})")
+        raise
+    if response.status_code == 401:
+        try:
+            error = response.json().get("Error")
+        except ValueError:
+            error = None
+        _note_omdb_problem(f"OMDb rejected the API key: {error or 'HTTP 401'}")
     response.raise_for_status()
-    return response.json()
+    data = response.json()
+    error = data.get("Error")
+    if data.get("Response") != "True" and error and error != "Movie not found!":
+        _note_omdb_problem(f"OMDb said: {error}")
+    return data
+
+
+# Account-level OMDb problems (bad key, daily limit, outage) seen during one run.
+# They are reported in the digest so missing scores are explained, not silent.
+_omdb_problems: set[str] = set()
+_omdb_problems_lock = threading.Lock()
+
+
+def _note_omdb_problem(message: str) -> None:
+    with _omdb_problems_lock:
+        _omdb_problems.add(message)
 
 
 def _apply_metadata(film: Film, data: dict) -> None:
@@ -965,8 +990,11 @@ def enrich_films(
     session: requests.Session | None = None,
     time_budget: float | None = None,
     max_workers: int = DEFAULT_MAX_WORKERS,
-) -> None:
+) -> list[str]:
     """Enrich all films with scores. Failures are logged but do not propagate.
+
+    Returns account-level OMDb problems seen this run (missing or rejected
+    key, daily limit, outage) so the digest can explain missing scores.
 
     time_budget (seconds) caps the whole enrichment: films whose lookups did
     not finish in time keep whatever they have and are marked
@@ -975,6 +1003,8 @@ def enrich_films(
     films are looked up concurrently.
     """
     deadline = time.monotonic() + time_budget if time_budget is not None else None
+    with _omdb_problems_lock:
+        _omdb_problems.clear()
 
     if not api_key:
         logger.warning("No OMDb API key configured; OMDb scores will be N/A")
@@ -998,3 +1028,11 @@ def enrich_films(
     incomplete = sum(1 for f in films if f.scores_incomplete)
     if incomplete:
         logger.warning("Scores incomplete for %d film(s): time budget used up", incomplete)
+
+    if not api_key:
+        return ["no OMDb API key is set"]
+    with _omdb_problems_lock:
+        problems = sorted(_omdb_problems)
+    for p in problems:
+        logger.warning("OMDb problem this run: %s", p)
+    return problems

@@ -12,7 +12,7 @@ from cinema_digest.models import Film, Scores, ScrapeResult, Screening
 LONDON_TZ = ZoneInfo("Europe/London")
 
 
-def _run_main(monkeypatch, scraped):
+def _run_main(monkeypatch, scraped, omdb_problems=None):
     """Run main() with scraping, enrichment and sending mocked out.
 
     scraped is the ScrapeResult to return, or an exception for scrape_all to raise.
@@ -23,7 +23,7 @@ def _run_main(monkeypatch, scraped):
         scrape_patch = patch.object(main_module, "scrape_all", side_effect=scraped)
     else:
         scrape_patch = patch.object(main_module, "scrape_all", return_value=scraped)
-    with scrape_patch, patch.object(main_module, "enrich_films") as enrich, \
+    with scrape_patch, patch.object(main_module, "enrich_films", return_value=omdb_problems or []) as enrich, \
             patch.object(main_module, "send_digest") as send:
         main_module.main()
     return enrich, send
@@ -70,6 +70,21 @@ class TestMainAlwaysSends:
         body = send.call_args.args[0]
         assert "Could not fetch the Clapham listings" in body
         assert send.call_args.kwargs["subject_flag"] == main_module.SUBJECT_FLAG_INCOMPLETE
+
+
+class TestMissingImdbExplained:
+    def test_no_imdb_scores_adds_reason(self, monkeypatch):
+        _, send = _run_main(monkeypatch, ScrapeResult(films=[_upcoming_film()]),
+                            omdb_problems=["OMDb said: Request limit reached!"])
+        body, html = send.call_args.args
+        assert "IMDb scores unavailable this week (OMDb said: Request limit reached!)" in body
+        assert "IMDb scores unavailable this week" in html
+
+    def test_imdb_present_no_note(self, monkeypatch):
+        film = _upcoming_film()
+        film.scores = Scores(imdb=7.3)
+        _, send = _run_main(monkeypatch, ScrapeResult(films=[film]))
+        assert "IMDb scores unavailable" not in send.call_args.args[0]
 
 
 class TestRedaction:
