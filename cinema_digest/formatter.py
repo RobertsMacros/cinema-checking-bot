@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 from cinema_digest.config import CINEMA_CODES, CINEMA_URLS
+from cinema_digest import considering as _considering
 from cinema_digest.models import Film, Scores, Screening
 
 LONDON_TZ = ZoneInfo("Europe/London")
@@ -140,6 +141,9 @@ def format_film_line(film: Film) -> str:
         title_parts.append(f"dir. {film.director}")
 
     parts = [f"- **{' — '.join(title_parts)}**"]
+    flag = _considering.label(film)
+    if flag:
+        parts.append(f"[{flag}]")
     if logline:
         parts.append(logline)
     parts.append(scores)
@@ -150,9 +154,10 @@ def format_film_line(film: Film) -> str:
 
 
 def _sort_key_mc_desc(film: Film) -> tuple:
-    """Sort key: Metacritic descending, then title. Films without MC go last."""
+    """Sort key: considered films first, then Metacritic descending, then title. Films without MC go last."""
     mc = film.scores.metacritic if film.scores and film.scores.metacritic is not None else -1
-    return (-mc, film.title.lower())
+    # Films Robert was considering (Wait and see in What's On) come first
+    return (0 if film.considering else 1, -mc, film.title.lower())
 
 
 def digest_warning(films: list[Film], listings_suspect: bool = False) -> str | None:
@@ -378,6 +383,11 @@ def _film_row_html(film: Film, is_top: bool = False) -> str:
     book_buttons = _book_buttons_html(film)
 
     star = " &#11088;" if highlighted else ""
+    flag = _considering.label(film)
+    considering_html = (
+        f'\n  <div style="display:inline-block;font-size:11px;font-weight:bold;color:{PH_WHITE};background:{PH_PINK};'
+        f'border-radius:10px;padding:2px 8px;margin-top:4px;">{_esc(flag)}</div>'
+    ) if flag else ""
 
     # Director + year metadata line
     meta_parts: list[str] = []
@@ -400,7 +410,7 @@ def _film_row_html(film: Film, is_top: bool = False) -> str:
 <tr>
 <td style="padding:10px 14px;vertical-align:top;">
   <div style="font-size:14px;font-weight:bold;color:{title_color};line-height:1.3;">{_esc(film.title)}{star}</div>
-  <div style="font-size:12px;color:{meta_color};margin-top:2px;">{meta_line}</div>
+  <div style="font-size:12px;color:{meta_color};margin-top:2px;">{meta_line}</div>{considering_html}
   <div style="font-size:12px;color:{text_color};margin-top:3px;line-height:1.4;">{logline}</div>
 </td>
 </tr>
