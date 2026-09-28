@@ -36,9 +36,12 @@ The scheduling examples below run `.venv/bin/python`, so the scheduled job uses 
 | `SMTP_PASSWORD` | SMTP password or app-specific password |
 | `EMAIL_FROM` | Sender email address |
 | `EMAIL_TO` | Recipient email address(es), comma-separated |
-| `CONSIDERING` | Optional, an Actions **variable** (not a secret). JSON list of films parked on What's On's Wait and see list, written by its Populate run: `[{"title": "...", "year": "2026", "bar": 75, "score": null}]`. Matching films are listed first with a pink flag saying whether their Metacritic score has cleared the bar |
 
 For Gmail: enable 2FA, then create an [App Password](https://myaccount.google.com/apppasswords).
+
+## Films you are considering
+
+`considering.json` at the repository root lists films parked on What's On's Wait and see list (titles and years only, since this repository is public). What's On's Populate run keeps it up to date. Matching films are listed first in the digest with a pink flag saying whether their Metacritic score has cleared your bar (75 unless the entry says otherwise). Set `CONSIDERING` in the environment to the same JSON to try a list locally.
 
 ## Usage
 

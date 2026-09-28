@@ -2,13 +2,15 @@
 
 What's On (RobertsMacros/whats-on) has a Wait and see button for films with
 no reviews yet: the film waits there until its Metacritic score reaches a bar
-(75 by default). Its Populate run writes that list to this repository's
-Actions variable CONSIDERING as JSON:
+(75 by default). Its Populate run commits that list to considering.json at
+the root of this repository:
 
-    [{"title": "Dune: Part Three", "year": "2026", "bar": 75, "score": null}]
+    [{"title": "Dune: Part Three", "year": "2026"}]
 
-Titles, years, bars and scores only; nothing else about the decision. An
-empty or missing variable means nothing is flagged.
+Titles and years only, plus "bar" when it is not 75: this repository is
+public, so nothing else about the decision is written here. A CONSIDERING
+environment variable in the same shape overrides the file (for a local run).
+A missing or unreadable list means nothing is flagged.
 """
 
 from __future__ import annotations
@@ -16,18 +18,24 @@ from __future__ import annotations
 import json
 import logging
 import os
+from pathlib import Path
 
 from cinema_digest.models import Film
 from cinema_digest.scraper import normalize_title
 
 logger = logging.getLogger(__name__)
 
+FILE = Path(__file__).resolve().parent.parent / "considering.json"
+
 DEFAULT_BAR = 75
 
 
 def load(raw: str | None = None) -> list[dict]:
-    """The CONSIDERING list, or [] when it is missing or unreadable."""
-    raw = os.environ.get("CONSIDERING", "") if raw is None else raw
+    """The considering list (env CONSIDERING, else considering.json), or [] when missing or unreadable."""
+    if raw is None:
+        raw = os.environ.get("CONSIDERING", "")
+        if not raw.strip() and FILE.exists():
+            raw = FILE.read_text(encoding="utf-8")
     if not raw.strip():
         return []
     try:

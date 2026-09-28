@@ -53,3 +53,13 @@ def test_considered_films_come_first_in_both_formats():
     html = format_digest_html(films)
     assert html.index("The Waiting Film") < html.index("Big Hit")
     assert "Metacritic 81 clears your 75" in html
+
+
+def test_file_is_read_when_env_is_empty(tmp_path, monkeypatch):
+    f = tmp_path / "considering.json"
+    f.write_text('[{"title": "From File", "year": "2026"}]')
+    monkeypatch.setattr(considering, "FILE", f)
+    monkeypatch.delenv("CONSIDERING", raising=False)
+    assert considering.load() == [{"title": "From File", "year": "2026"}]
+    monkeypatch.setenv("CONSIDERING", '[{"title": "From Env"}]')
+    assert considering.load() == [{"title": "From Env"}]
