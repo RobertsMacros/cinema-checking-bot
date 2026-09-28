@@ -198,23 +198,68 @@ def fetch_omdb(
     if year:
         params["y"] = str(year)
 
+    return _omdb_get(s, params)
+
+
+class OmdbUnavailable(requests.RequestException):
+    """OMDb refused this run (bad key or daily limit); stop asking it."""
+
+
+_OMDB_RETRY_DELAYS = (2, 4, 8)   # seconds; OMDb's free tier throttles bursts
+_OMDB_MIN_GAP = 0.25              # seconds between OMDb calls, across threads
+_omdb_call_lock = threading.Lock()
+_omdb_last_call = 0.0
+_omdb_blocked: str | None = None
+_sleep = time.sleep               # patched in tests
+
+
+def _omdb_error(response) -> str:
     try:
-        response = s.get(OMDB_API_URL, params=params, timeout=_TIMEOUT)
-    except requests.RequestException as e:
-        _note_omdb_problem(f"OMDb unreachable ({type(e).__name__})")
-        raise
-    if response.status_code == 401:
+        return str(response.json().get("Error") or "")
+    except ValueError:
+        return ""
+
+
+def _omdb_get(s: requests.Session, params: dict[str, str]) -> dict:
+    """Every OMDb request goes through here: spaced out, retried when OMDb
+    says it is rate limited, and switched off for the rest of the run once
+    the key is rejected or the daily limit is really used up."""
+    global _omdb_last_call, _omdb_blocked
+    for attempt in range(len(_OMDB_RETRY_DELAYS) + 1):
+        if _omdb_blocked:
+            raise OmdbUnavailable(_omdb_blocked)
+        with _omdb_call_lock:
+            wait = _OMDB_MIN_GAP - (time.monotonic() - _omdb_last_call)
+            if wait > 0:
+                _sleep(wait)
+            _omdb_last_call = time.monotonic()
         try:
-            error = response.json().get("Error")
-        except ValueError:
-            error = None
-        _note_omdb_problem(f"OMDb rejected the API key: {error or 'HTTP 401'}")
-    response.raise_for_status()
-    data = response.json()
-    error = data.get("Error")
-    if data.get("Response") != "True" and error and error != "Movie not found!":
-        _note_omdb_problem(f"OMDb said: {error}")
-    return data
+            response = s.get(OMDB_API_URL, params=params, timeout=_TIMEOUT)
+        except requests.RequestException as e:
+            _note_omdb_problem(f"OMDb unreachable ({type(e).__name__})")
+            raise
+        error = _omdb_error(response)
+        limited = response.status_code == 429 or "limit" in error.lower()
+        if limited or response.status_code >= 500:
+            if attempt < len(_OMDB_RETRY_DELAYS):
+                logger.info("OMDb busy (%s); retrying in %ss", error or response.status_code, _OMDB_RETRY_DELAYS[attempt])
+                _sleep(_OMDB_RETRY_DELAYS[attempt])
+                continue
+            if limited:
+                _omdb_blocked = "OMDb request limit reached (free keys allow 1,000 a day)"
+                _note_omdb_problem(_omdb_blocked)
+                raise OmdbUnavailable(_omdb_blocked)
+        if response.status_code == 401:
+            _omdb_blocked = f"OMDb rejected the API key: {error or 'HTTP 401'}"
+            _note_omdb_problem(_omdb_blocked)
+            raise OmdbUnavailable(_omdb_blocked)
+        response.raise_for_status()
+        data = response.json()
+        error = data.get("Error")
+        if data.get("Response") != "True" and error and error != "Movie not found!":
+            _note_omdb_problem(f"OMDb said: {error}")
+        return data
+    raise OmdbUnavailable("OMDb kept failing")
 
 
 # Account-level OMDb problems (bad key, daily limit, outage) seen during one run.
@@ -391,9 +436,7 @@ def _fetch_omdb_by_imdb_id(
 ) -> dict:
     """Query OMDb by IMDb ID for full scores."""
     params: dict[str, str] = {"apikey": api_key, "i": imdb_id, "type": "movie"}
-    resp = session.get(OMDB_API_URL, params=params, timeout=_TIMEOUT)
-    resp.raise_for_status()
-    return resp.json()
+    return _omdb_get(session, params)
 
 
 def _enrich_via_tmdb_imdb(
@@ -1003,8 +1046,10 @@ def enrich_films(
     films are looked up concurrently.
     """
     deadline = time.monotonic() + time_budget if time_budget is not None else None
+    global _omdb_blocked
     with _omdb_problems_lock:
         _omdb_problems.clear()
+    _omdb_blocked = None
 
     if not api_key:
         logger.warning("No OMDb API key configured; OMDb scores will be N/A")

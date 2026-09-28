@@ -386,14 +386,39 @@ def _screened(title, **kwargs):
 
 
 class TestEnrichFilms:
-    def test_omdb_account_problems_are_returned(self, cache_dir):
+    def test_omdb_account_problems_are_returned(self, cache_dir, monkeypatch):
+        monkeypatch.setattr(enrich_module, "_sleep", lambda s: None)
         for status, payload, expected in (
             (401, {"Response": "False", "Error": "Invalid API key!"}, "OMDb rejected the API key: Invalid API key!"),
-            (200, {"Response": "False", "Error": "Request limit reached!"}, "OMDb said: Request limit reached!"),
+            (401, {"Response": "False", "Error": "Request limit reached!"}, "OMDb request limit reached (free keys allow 1,000 a day)"),
         ):
             session = FakeSession({enrich_module.OMDB_API_URL: FakeResponse(status, payload)})
             problems = enrich_films([_screened("A")], api_key="k", session=session)
             assert problems == [expected]
+
+    def test_rate_limit_is_retried_then_succeeds(self, cache_dir, monkeypatch):
+        monkeypatch.setattr(enrich_module, "_sleep", lambda s: None)
+        limited = FakeResponse(401, {"Response": "False", "Error": "Request limit reached!"})
+        ok = FakeResponse(200, _omdb("A", 2020, metascore="81"))
+        replies = [limited, limited, ok]
+
+        class Seq(FakeSession):
+            def get(self, url, **kwargs):
+                self.calls.append(url)
+                return replies.pop(0) if url.startswith(enrich_module.OMDB_API_URL) and replies else FakeResponse(404)
+
+        films = [_screened("A", year=2020)]
+        problems = enrich_films(films, api_key="k", session=Seq())
+        assert films[0].scores.metacritic == 81
+        assert problems == []
+
+    def test_daily_limit_stops_further_omdb_calls(self, cache_dir, monkeypatch):
+        monkeypatch.setattr(enrich_module, "_sleep", lambda s: None)
+        session = FakeSession({enrich_module.OMDB_API_URL: FakeResponse(401, {"Response": "False", "Error": "Request limit reached!"})})
+        problems = enrich_films([_screened("A"), _screened("B"), _screened("C")], api_key="k", session=session)
+        omdb_calls = [u for u in session.calls if u.startswith(enrich_module.OMDB_API_URL)]
+        assert len(omdb_calls) == 4                     # first try + 3 retries, then OMDb is skipped
+        assert problems == ["OMDb request limit reached (free keys allow 1,000 a day)"]
 
     def test_not_found_is_not_a_problem(self, cache_dir):
         session = FakeSession({enrich_module.OMDB_API_URL: FakeResponse(200, {"Response": "False", "Error": "Movie not found!"})})
