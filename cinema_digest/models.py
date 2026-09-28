@@ -43,6 +43,8 @@ class Film:
     scores: Scores | None = None
     # True when enrichment ran out of time before every score source was tried
     scores_incomplete: bool = False
+    # Set when the film is on What's On's Wait and see list: {"bar": 75}
+    considering: dict | None = None
 
 
 @dataclass

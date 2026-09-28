@@ -8,6 +8,7 @@ import re
 import sys
 import time
 
+from cinema_digest import considering
 from cinema_digest.config import RUN_TIME_BUDGET_SECONDS, SEND_RESERVE_SECONDS, Config
 from cinema_digest.emailer import send_digest
 from cinema_digest.enrich import enrich_films
@@ -104,6 +105,11 @@ def main() -> None:
             f"Parsed {len(scraped.films)} film(s) and {total_screenings} screening(s) in total; "
             f"none fell in the next 7 days' viewing windows."
         )
+
+    # 2b. Flag films on What's On's Wait and see list
+    flagged = considering.mark(filtered, considering.load())
+    if flagged:
+        logger.info("Flagged %d film(s) from the Wait and see list", flagged)
 
     # 3. Enrich within the remaining time budget
     if filtered:

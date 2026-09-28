@@ -39,6 +39,10 @@ The scheduling examples below run `.venv/bin/python`, so the scheduled job uses 
 
 For Gmail: enable 2FA, then create an [App Password](https://myaccount.google.com/apppasswords).
 
+## Films you are considering
+
+`considering.json` at the repository root lists films parked on What's On's Wait and see list (titles and years only, since this repository is public). What's On's Populate run keeps it up to date. Matching films are listed first in the digest with a pink flag saying whether their Metacritic score has cleared your bar (75 unless the entry says otherwise). Set `CONSIDERING` in the environment to the same JSON to try a list locally.
+
 ## Usage
 
 ### Dry run (prints to stdout, no email sent)
