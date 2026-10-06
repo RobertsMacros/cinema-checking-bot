@@ -12,6 +12,7 @@ PAGE_HTML = r"""<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Cinema Listings — Clapham &amp; Ritzy</title>
+<script>window.FILMS_URL = window.FILMS_URL || "/api/films";</script>
 <style>
   :root {
     --ph-pink: #E2124D;
@@ -211,7 +212,8 @@ async function load(refresh) {
   btn.disabled = true;
   if (refresh) $("content").innerHTML = '<div class="state"><div class="spinner"></div>Refreshing listings…</div>';
   try {
-    const res = await fetch("/api/films" + (refresh ? "?refresh=1" : ""));
+    const url = window.FILMS_URL;
+    const res = await fetch(refresh ? url + (url.includes("?") ? "&" : "?") + "refresh=1" : url);
     state.data = await res.json();
   } catch (e) {
     $("content").innerHTML = '<div class="state error">Could not load listings. Try refreshing.</div>';
