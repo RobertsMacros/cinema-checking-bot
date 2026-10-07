@@ -11,3 +11,4 @@ fix_manifest.json
 insight_dump.md
 .DS_Store
 public/
+.netlify/
