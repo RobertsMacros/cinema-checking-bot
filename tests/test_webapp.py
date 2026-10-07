@@ -464,3 +464,25 @@ def test_first_scrape_missing_a_cinema_is_flagged(monkeypatch):
     assert payload["warning"]  # flagged as suspect
     assert any("Ritzy" in n for n in payload["notes"])
     assert not webapp._has_recent_good_result(webapp.time.monotonic())
+
+
+def test_build_digest_reports_incomplete_enrichment(monkeypatch):
+    from cinema_digest.models import ScrapeResult
+
+    film = _at_both("Slow")
+
+    def fake_enrich(films, *args, **kwargs):
+        films[0].scores = Scores()
+        films[0].scores_incomplete = True
+        return ["OMDb daily request limit reached"]
+
+    monkeypatch.setattr(webapp, "scrape_all", lambda: ScrapeResult(films=[film]))
+    monkeypatch.setattr(webapp, "filter_screenings", lambda films: films)
+    monkeypatch.setattr(webapp.considering, "load", lambda: [])
+    monkeypatch.setattr(webapp, "enrich_films", fake_enrich)
+
+    films, notes, suspect = webapp.build_digest(config=webapp.Config.from_env())
+
+    assert any("OMDb daily request limit reached" in n for n in notes)
+    assert any("could not be fetched within the time limit" in n for n in notes)
+    assert webapp.serialize_film(films[0])["scores_incomplete"] is True

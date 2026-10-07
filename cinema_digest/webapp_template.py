@@ -308,7 +308,9 @@ function cardHtml(film) {
     scoreEl("metacritic", sc.metacritic, su.metacritic),
     scoreEl("imdb", sc.imdb, su.imdb),
     scoreEl("rotten_tomatoes", sc.rotten_tomatoes, su.rotten_tomatoes, "%"),
-  ].join("");
+  ].join("") + (film.scores_incomplete
+    ? '<span class="na" title="Score lookup ran out of time for this film">scores incomplete</span>'
+    : "");
   return `<div class="card${film.highlighted ? " hl" : ""}">
     <div class="title">${esc(film.title)}${film.highlighted ? '<span class="star">⭐</span>' : ""}${film.considering ? '<span class="badge">Wait and see</span>' : ""}</div>
     ${meta ? `<div class="metaline">${meta}</div>` : ""}

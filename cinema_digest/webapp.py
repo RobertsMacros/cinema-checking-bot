@@ -40,7 +40,7 @@ from cinema_digest.formatter import (
     digest_warning,
     is_highlighted,
 )
-from cinema_digest.main import setup_logging
+from cinema_digest.main import enrichment_notes, setup_logging
 from cinema_digest.models import Film, ScrapeResult
 from cinema_digest.scraper import scrape_all
 from cinema_digest.webapp_template import PAGE_HTML
@@ -110,12 +110,13 @@ def build_digest(config: Config | None = None) -> tuple[list[Film], list[str], b
     considering.mark(filtered, considering.load())
     if filtered:
         remaining = RUN_TIME_BUDGET_SECONDS - (time.monotonic() - started)
-        enrich_films(
+        omdb_problems = enrich_films(
             filtered,
             config.omdb_api_key,
             tmdb_api_key=config.tmdb_api_key,
             time_budget=max(0.0, remaining),
-        )
+        ) or []
+        notes.extend(enrichment_notes(filtered, omdb_problems))
     return filtered, notes, scraped.listings_suspect
 
 
@@ -271,6 +272,8 @@ def serialize_film(film: Film) -> dict:
         "logline": _compact_logline(film.logline),
         "highlighted": is_highlighted(scores),
         "considering": bool(film.considering),
+        # Enrichment hit its time limit before trying every score source
+        "scores_incomplete": film.scores_incomplete,
         "scores": {
             "metacritic": scores.metacritic if scores else None,
             "imdb": scores.imdb if scores else None,
