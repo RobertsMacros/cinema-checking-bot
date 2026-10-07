@@ -145,6 +145,18 @@ PAGE_HTML = r"""<!DOCTYPE html>
   }
   @keyframes spin { to { transform: rotate(360deg); } }
   .error { color: var(--ph-pink); }
+  .banner {
+    max-width: 900px; margin: 10px auto 0; padding: 10px 14px;
+    border: 1px solid #4a2333; background: var(--card-hl); border-radius: 10px;
+    color: var(--text); font-size: 13px;
+  }
+  .banner ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
+  .wrap-banner { padding: 0 16px; }
+  .badge {
+    display: inline-block; font-size: 11px; font-weight: normal; vertical-align: middle;
+    border: 1px solid var(--ph-pink); color: var(--ph-pink);
+    border-radius: 999px; padding: 1px 8px; margin-left: 6px;
+  }
 
   footer { text-align: center; color: var(--dim); font-size: 11px; padding: 24px 16px 40px; }
   footer a { color: var(--ph-pink); text-decoration: none; }
@@ -172,6 +184,8 @@ PAGE_HTML = r"""<!DOCTYPE html>
     <span id="resultCount"></span>
     <span id="updated"></span>
   </div>
+
+  <div class="wrap-banner"><div class="banner" id="banner" hidden></div></div>
 
   <main>
     <div id="content">
@@ -295,7 +309,7 @@ function cardHtml(film) {
     scoreEl("rotten_tomatoes", sc.rotten_tomatoes, su.rotten_tomatoes, "%"),
   ].join("");
   return `<div class="card${film.highlighted ? " hl" : ""}">
-    <div class="title">${esc(film.title)}${film.highlighted ? '<span class="star">⭐</span>' : ""}</div>
+    <div class="title">${esc(film.title)}${film.highlighted ? '<span class="star">⭐</span>' : ""}${film.considering ? '<span class="badge">Wait and see</span>' : ""}</div>
     ${meta ? `<div class="metaline">${meta}</div>` : ""}
     ${film.logline ? `<div class="logline">${esc(film.logline)}</div>` : ""}
     <div class="showtimes">${showtimesHtml(film)}</div>
@@ -315,9 +329,18 @@ function matches(film) {
   return true;
 }
 
+function renderBanner(data) {
+  const notes = data.notes || [];
+  if (!data.warning && notes.length === 0) { $("banner").hidden = true; return; }
+  $("banner").innerHTML = (data.warning ? esc(data.warning) : "") +
+    (notes.length ? "<ul>" + notes.map((n) => `<li>${esc(n)}</li>`).join("") + "</ul>" : "");
+  $("banner").hidden = false;
+}
+
 function render() {
   const data = state.data;
   if (!data) return;
+  renderBanner(data);
   if (data.error && (!data.films || data.films.length === 0)) {
     $("content").innerHTML = `<div class="state error">Couldn't fetch listings: ${esc(data.error)}<br>Try Refresh in a moment.</div>`;
     $("resultCount").textContent = "";

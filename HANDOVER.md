@@ -1,6 +1,6 @@
 # Handover: review + fix listings collection
 
-**Repo:** `RobertsMacros/cinema-checking-bot`, branch `claude/newsletter-cinema-webapp-0vlt2a` (not yet merged to `main`)
+**Repo:** `RobertsMacros/cinema-checking-bot`, `main` branch (the web app arrived in the PR from `claude/newsletter-cinema-webapp-0vlt2a`)
 **Live site:** https://clapham-ritzy-cinema.netlify.app (Netlify project `clapham-ritzy-cinema`)
 
 ## What this project is
@@ -8,7 +8,7 @@
 A bot that collects film listings for two London cinemas (Clapham Picturehouse and the Ritzy, Brixton), keeps evening/weekend showtimes for the next 7 days, adds review scores (Metacritic, IMDb, Rotten Tomatoes), and outputs them in two ways:
 
 1. **Email digest.** `python -m cinema_digest.main` runs weekly through `.github/workflows/cinema_digest.yml`.
-2. **Interactive web app** (new on this branch). The page can be filtered by cinema, searched, and set to show highlighted films only.
+2. **Interactive web app.** The page can be filtered by cinema, searched, and set to show highlighted films only.
    - Local: `python -m cinema_digest.webapp` starts a Flask app with an in-memory cache, serving `/` and `/api/films`.
    - Hosted: `build_static.py` runs the pipeline at build time and writes `public/films.json` and `public/index.html`. `netlify.toml` configures the build.
 
@@ -65,20 +65,16 @@ Suggested implementation:
    - a GitHub Actions cron that triggers a Netlify build hook
    - a Netlify Scheduled Function that POSTs to a build hook
 2. **Netlify is not linked to GitHub.** The first deploy was uploaded through the Netlify CLI, so pushing to the repo does not redeploy. Link the repo in the Netlify UI (Project configuration → Build & deploy → Link repository), or deploy from CI.
-3. **Two tests fail before any of these changes.** `tests/test_scraper.py::TestParseDateHeader::test_normal_date` and `test_single_digit_day` hard-code March 2026. `_parse_date_header` moves dates more than 60 days in the past into the next year, so these tests depend on today's date. Pass `today` into the function so the tests can fix it. This becomes irrelevant if Data Thistle is dropped.
-4. **The documentation contradicts the code.** `EXPECTATIONS.md` says films are sorted alphabetically and starred at MC ≥ 70 / IMDb ≥ 7.0 / RT ≥ 80%. The code sorts by Metacritic, descending, and uses MC ≥ 76 or IMDb ≥ 7.7 (`formatter.is_highlighted`). The README says the GitHub Action runs daily at 06:00 UTC, but the workflow cron is weekly: Tuesday 17:00 UTC.
-5. **Booking links** come from Data Thistle `booking_url`s plus `ph_url` matched by normalised title against the Picturehouse what's-on page (`enrich._enrich_ph_links`). That title matching is fragile, and the new source makes it unnecessary.
-6. **Smaller items:**
-   - `formatter._format_booking_link_plain` contains a meaningless `hasattr(film, 'ph_url')` check.
-   - `.DS_Store` and `_test_digest.html` are committed.
-   - The time-window rules in `filters.py` and the `CACHE_TTL_SECONDS` default (30 min) are worth checking against what the user wants.
+3. **Booking links** come from Data Thistle `booking_url`s plus `ph_url` matched by normalised title against the Picturehouse what's-on page (`enrich._enrich_ph_links`). That title matching is fragile, and the new source makes it unnecessary.
+4. **Build time on Netlify.** The build runs the whole pipeline, including enrichment, within `RUN_TIME_BUDGET_SECONDS` (8 min). Going from about 6 films to about 70 will make enrichment much slower. Check that builds stay inside Netlify's limits and that the enrichment caches (`.cache/`) are used well. Netlify does not keep `.cache/` between builds unless it is told to.
+5. **Small item:** `_test_digest.html` is a committed test artefact.
 
 ## Definition of done
 
 - Both cinemas return realistic counts (dozens of films, about 10–25 showtimes a day each) in both the email and the web app.
-- Tests pass with no network access (`pytest tests/`), including the two date tests.
+- Tests pass with no network access (`pytest tests/`).
 - The hosted site rebuilds automatically at least daily, and pushes to the repo deploy.
-- Docs (`README.md`, `EXPECTATIONS.md`) match the code.
+- Docs (`README.md`, `EXPECTATIONS.md`) still match the code after the source change.
 
 ## How to run
 

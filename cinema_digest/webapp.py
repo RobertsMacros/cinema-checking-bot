@@ -22,17 +22,24 @@ import logging
 import os
 import re
 import threading
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from flask import Flask, jsonify, request
 
-from cinema_digest.config import CINEMA_CODES, CINEMA_URLS, Config
+from cinema_digest import considering
+from cinema_digest.config import CINEMA_CODES, CINEMA_URLS, RUN_TIME_BUDGET_SECONDS, Config
 from cinema_digest.enrich import enrich_films
 from cinema_digest.filters import filter_screenings
-from cinema_digest.formatter import _compact_logline, is_highlighted
-from cinema_digest.models import Film
-from cinema_digest.scraper import ScraperError, scrape_all
+from cinema_digest.formatter import (
+    _compact_logline,
+    _sort_key_mc_desc,
+    digest_warning,
+    is_highlighted,
+)
+from cinema_digest.models import Film, ScrapeResult
+from cinema_digest.scraper import scrape_all
 from cinema_digest.webapp_template import PAGE_HTML
 
 logger = logging.getLogger("cinema_digest.webapp")
@@ -52,6 +59,8 @@ class _Cache:
 
     def __init__(self) -> None:
         self.films: list[Film] | None = None
+        self.notes: list[str] = []
+        self.listings_suspect: bool = False
         self.fetched_at: datetime | None = None
         self.error: str | None = None
         self.lock = threading.Lock()
@@ -60,64 +69,72 @@ class _Cache:
 _cache = _Cache()
 
 
-def build_digest(config: Config | None = None) -> list[Film]:
-    """Run the full pipeline and return enriched, filtered films.
+def build_digest(config: Config | None = None) -> tuple[list[Film], list[str], bool]:
+    """Run the full pipeline; return (films, notes, listings_suspect).
 
+    Mirrors main.main(): scraping problems become notes rather than errors.
     Isolated so tests can monkeypatch it without touching the network.
     """
+    started = time.monotonic()
     if config is None:
         config = Config.from_env()
 
-    films = scrape_all()
-    logger.info("Scraped %d unique films", len(films))
-
-    filtered = filter_screenings(films)
-    if filtered:
-        enrich_films(
-            filtered, config.omdb_api_key, tmdb_api_key=config.tmdb_api_key
+    try:
+        scraped = scrape_all()
+    except Exception as e:
+        logger.exception("Unexpected error during scraping")
+        scraped = ScrapeResult(
+            warnings=[f"Scraping failed with an unexpected error ({type(e).__name__})."],
+            listings_suspect=True,
         )
-    return filtered
+    logger.info("Scraped %d unique films", len(scraped.films))
+    notes = list(scraped.warnings)
+
+    filtered = filter_screenings(scraped.films)
+    considering.mark(filtered, considering.load())
+    if filtered:
+        remaining = RUN_TIME_BUDGET_SECONDS - (time.monotonic() - started)
+        enrich_films(
+            filtered,
+            config.omdb_api_key,
+            tmdb_api_key=config.tmdb_api_key,
+            time_budget=max(0.0, remaining),
+        )
+    return filtered, notes, scraped.listings_suspect
 
 
-def get_films(force_refresh: bool = False) -> tuple[list[Film], datetime | None, str | None]:
-    """Return (films, fetched_at, error), scraping if the cache is stale.
-
-    Only one scrape runs at a time; concurrent callers reuse the result.
-    """
-    now = datetime.now(LONDON_TZ)
-    fresh = (
+def _is_fresh(now: datetime) -> bool:
+    return (
         _cache.films is not None
         and _cache.fetched_at is not None
         and (now - _cache.fetched_at).total_seconds() < CACHE_TTL_SECONDS
     )
-    if fresh and not force_refresh:
-        return _cache.films, _cache.fetched_at, None
+
+
+def get_films(force_refresh: bool = False) -> _Cache:
+    """Return the cache, re-running the pipeline first if it is stale.
+
+    Only one scrape runs at a time; concurrent callers reuse the result.
+    """
+    if _is_fresh(datetime.now(LONDON_TZ)) and not force_refresh:
+        return _cache
 
     with _cache.lock:
         # Re-check inside the lock: another thread may have just refreshed.
-        now = datetime.now(LONDON_TZ)
-        fresh = (
-            _cache.films is not None
-            and _cache.fetched_at is not None
-            and (now - _cache.fetched_at).total_seconds() < CACHE_TTL_SECONDS
-        )
-        if fresh and not force_refresh:
-            return _cache.films, _cache.fetched_at, None
-
+        if _is_fresh(datetime.now(LONDON_TZ)) and not force_refresh:
+            return _cache
         try:
-            films = build_digest()
+            films, notes, suspect = build_digest()
             _cache.films = films
+            _cache.notes = notes
+            _cache.listings_suspect = suspect
             _cache.fetched_at = datetime.now(LONDON_TZ)
             _cache.error = None
             logger.info("Cache refreshed: %d films", len(films))
-        except ScraperError as e:
-            logger.error("Scraping failed: %s", e)
-            _cache.error = str(e)
         except Exception as e:  # noqa: BLE001 - surface any failure to the UI
             logger.exception("Unexpected error building digest")
             _cache.error = f"{type(e).__name__}: {e}"
-
-        return _cache.films or [], _cache.fetched_at, _cache.error
+        return _cache
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +188,7 @@ def serialize_film(film: Film) -> dict:
         "duration": film.duration,
         "logline": _compact_logline(film.logline),
         "highlighted": is_highlighted(scores),
+        "considering": bool(film.considering),
         "scores": {
             "metacritic": scores.metacritic if scores else None,
             "imdb": scores.imdb if scores else None,
@@ -183,22 +201,21 @@ def serialize_film(film: Film) -> dict:
     }
 
 
-def _sort_key_mc_desc(film: Film) -> tuple:
-    mc = film.scores.metacritic if film.scores and film.scores.metacritic is not None else -1
-    return (-mc, film.title.lower())
-
-
 def build_payload(force_refresh: bool = False) -> dict:
     """Build the JSON payload served at /api/films."""
-    films, fetched_at, error = get_films(force_refresh=force_refresh)
+    cache = get_films(force_refresh=force_refresh)
+    films = cache.films or []
     ordered = sorted(films, key=_sort_key_mc_desc)
+    fetched_at = cache.fetched_at
     return {
         "films": [serialize_film(f) for f in ordered],
-        "cinemas": sorted({c for f in films for c in {s.cinema for s in f.screenings}}),
+        "cinemas": sorted({s.cinema for f in films for s in f.screenings}),
         "fetched_at": fetched_at.isoformat() if fetched_at else None,
         "fetched_at_label": fetched_at.strftime("%a %d %b, %H:%M") if fetched_at else None,
         "count": len(ordered),
-        "error": error,
+        "warning": digest_warning(films, cache.listings_suspect) if fetched_at else None,
+        "notes": list(cache.notes),
+        "error": cache.error,
     }
 
 

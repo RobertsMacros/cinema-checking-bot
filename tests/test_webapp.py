@@ -11,13 +11,9 @@ from cinema_digest.models import Film, Scores, Screening
 @pytest.fixture(autouse=True)
 def clear_cache():
     """Reset the module-level cache between tests."""
-    webapp._cache.films = None
-    webapp._cache.fetched_at = None
-    webapp._cache.error = None
+    webapp._cache.__init__()
     yield
-    webapp._cache.films = None
-    webapp._cache.fetched_at = None
-    webapp._cache.error = None
+    webapp._cache.__init__()
 
 
 def test_serialize_film(sample_film):
@@ -47,17 +43,38 @@ def test_serialize_film_no_scores(sample_screening_weekday):
 def test_build_payload_sorts_by_metacritic(monkeypatch):
     low = Film(title="Low", screenings=[], scores=Scores(metacritic=40))
     high = Film(title="High", screenings=[], scores=Scores(metacritic=90))
-    monkeypatch.setattr(webapp, "build_digest", lambda config=None: [low, high])
+    monkeypatch.setattr(webapp, "build_digest", lambda config=None: ([low, high], [], False))
 
     payload = webapp.build_payload(force_refresh=True)
     titles = [f["title"] for f in payload["films"]]
     assert titles == ["High", "Low"]
     assert payload["count"] == 2
     assert payload["error"] is None
+    assert payload["warning"] is None
+
+
+def test_build_payload_puts_considered_films_first(monkeypatch):
+    high = Film(title="High", screenings=[], scores=Scores(metacritic=90))
+    waiting = Film(title="Waiting", screenings=[], scores=Scores(metacritic=50), considering={"bar": 75})
+    monkeypatch.setattr(webapp, "build_digest", lambda config=None: ([high, waiting], [], False))
+
+    payload = webapp.build_payload(force_refresh=True)
+    assert [f["title"] for f in payload["films"]] == ["Waiting", "High"]
+    assert payload["films"][0]["considering"] is True
+
+
+def test_build_payload_carries_notes_and_warning(monkeypatch, sample_film):
+    monkeypatch.setattr(
+        webapp, "build_digest",
+        lambda config=None: ([sample_film], ["Ritzy page failed to load."], True),
+    )
+    payload = webapp.build_payload(force_refresh=True)
+    assert payload["notes"] == ["Ritzy page failed to load."]
+    assert payload["warning"]  # listings_suspect -> banner text
 
 
 def test_api_films_route(monkeypatch, sample_film):
-    monkeypatch.setattr(webapp, "build_digest", lambda config=None: [sample_film])
+    monkeypatch.setattr(webapp, "build_digest", lambda config=None: ([sample_film], [], False))
     app = webapp.create_app()
     client = app.test_client()
 
@@ -83,7 +100,7 @@ def test_cache_reuses_result(monkeypatch):
 
     def fake_build(config=None):
         calls["n"] += 1
-        return [Film(title="Once", screenings=[])]
+        return [Film(title="Once", screenings=[])], [], False
 
     monkeypatch.setattr(webapp, "build_digest", fake_build)
 
@@ -92,13 +109,22 @@ def test_cache_reuses_result(monkeypatch):
     assert calls["n"] == 1
 
 
-def test_scraper_error_surfaces(monkeypatch):
-    from cinema_digest.scraper import ScraperError
-
+def test_pipeline_error_surfaces(monkeypatch):
     def boom(config=None):
-        raise ScraperError("structure changed")
+        raise RuntimeError("structure changed")
 
     monkeypatch.setattr(webapp, "build_digest", boom)
-    films, fetched_at, error = webapp.get_films(force_refresh=True)
+    payload = webapp.build_payload(force_refresh=True)
+    assert payload["films"] == []
+    assert "structure changed" in payload["error"]
+
+
+def test_scrape_failure_becomes_note(monkeypatch):
+    def scrape_boom():
+        raise ConnectionError("down")
+
+    monkeypatch.setattr(webapp, "scrape_all", scrape_boom)
+    films, notes, suspect = webapp.build_digest(config=webapp.Config.from_env())
     assert films == []
-    assert "structure changed" in error
+    assert suspect is True
+    assert "ConnectionError" in notes[0]
