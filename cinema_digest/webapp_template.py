@@ -327,7 +327,12 @@ function upcoming(films) {
   const now = Date.now();
   return (films || []).map((f) => {
     const showtimes = f.showtimes.filter((s) => Date.parse(s.iso) > now);
-    return { ...f, showtimes, cinemas: [...new Set(showtimes.map((s) => s.cinema))].sort() };
+    // Book links point at the earliest screening, which may have just gone:
+    // use each cinema's earliest remaining showtime (already validated, or
+    // the film/cinema page, server-side). Showtimes arrive sorted by time.
+    const booking_urls = {};
+    showtimes.forEach((s) => { if (!(s.cinema in booking_urls)) booking_urls[s.cinema] = s.url; });
+    return { ...f, showtimes, booking_urls, cinemas: Object.keys(booking_urls).sort() };
   }).filter((f) => f.showtimes.length > 0);
 }
 
