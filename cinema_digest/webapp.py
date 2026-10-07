@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import threading
 import time
 from datetime import datetime
@@ -29,15 +28,19 @@ from zoneinfo import ZoneInfo
 from flask import Flask, jsonify, request
 
 from cinema_digest import considering
-from cinema_digest.config import CINEMA_CODES, CINEMA_URLS, RUN_TIME_BUDGET_SECONDS, Config
+from cinema_digest.config import RUN_TIME_BUDGET_SECONDS, Config
 from cinema_digest.enrich import enrich_films
 from cinema_digest.filters import filter_screenings
 from cinema_digest.formatter import (
+    _cinema_page_url,
     _compact_logline,
+    _film_booking_url,
+    _is_valid_booking_url,
     _sort_key_mc_desc,
     digest_warning,
     is_highlighted,
 )
+from cinema_digest.main import setup_logging
 from cinema_digest.models import Film, ScrapeResult
 from cinema_digest.scraper import scrape_all
 from cinema_digest.webapp_template import PAGE_HTML
@@ -153,17 +156,22 @@ def _score_urls(film: Film) -> dict[str, str | None]:
 
 
 def _booking_urls(film: Film) -> dict[str, str]:
-    """Best booking URL for each cinema the film screens at."""
-    urls: dict[str, str] = {}
-    for cinema in sorted({s.cinema for s in film.screenings}):
-        if film.ph_url:
-            code = CINEMA_CODES.get(cinema, "000")
-            urls[cinema] = re.sub(
-                r"/movie-details/\d+/", f"/movie-details/{code}/", film.ph_url
-            )
-        else:
-            urls[cinema] = CINEMA_URLS.get(cinema, "https://www.picturehouses.com")
-    return urls
+    """Booking URL per cinema, chosen the same way as the email's Book buttons."""
+    return {
+        cinema: _film_booking_url(film, cinema)
+        for cinema in sorted({s.cinema for s in film.screenings})
+    }
+
+
+def _showtime_url(film: Film, booking_url: str | None, cinema: str) -> str:
+    """The screening's own link if it is in Picturehouse's current format.
+
+    Older links (e.g. ticketing.picturehouses.com) are dead, so those fall
+    back to the film's page at that cinema, as in the email.
+    """
+    if _is_valid_booking_url(booking_url):
+        return booking_url
+    return _cinema_page_url(film, cinema)
 
 
 def serialize_film(film: Film) -> dict:
@@ -176,7 +184,7 @@ def serialize_film(film: Film) -> dict:
             "date": f"{s.date.day} {s.date.strftime('%b')}",
             "time": s.date.strftime("%H:%M"),
             "iso": s.date.isoformat(),
-            "url": s.booking_url,
+            "url": _showtime_url(film, s.booking_url, s.cinema),
             "type": s.screening_type,
         }
         for s in sorted(film.screenings, key=lambda s: s.date)
@@ -255,10 +263,8 @@ def main() -> None:
     parser.add_argument("--debug", action="store_true", help="Enable Flask debug mode")
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(name)s %(levelname)s %(message)s",
-    )
+    # Redacts API keys that requests puts in HTTP error messages.
+    setup_logging()
 
     app = create_app()
     logger.info("Starting cinema web app on http://%s:%d", args.host, args.port)

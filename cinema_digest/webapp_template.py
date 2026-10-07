@@ -331,8 +331,13 @@ function matches(film) {
 
 function renderBanner(data) {
   const notes = data.notes || [];
-  if (!data.warning && notes.length === 0) { $("banner").hidden = true; return; }
-  $("banner").innerHTML = (data.warning ? esc(data.warning) : "") +
+  // A failed refresh keeps the previous films, so say they may be stale.
+  const error = data.error && data.films && data.films.length
+    ? `Refresh failed (${data.error}); showing listings from ${data.fetched_at_label || "the last successful load"}.`
+    : "";
+  const headline = [error, data.warning].filter(Boolean).map(esc).join("<br>");
+  if (!headline && notes.length === 0) { $("banner").hidden = true; return; }
+  $("banner").innerHTML = headline +
     (notes.length ? "<ul>" + notes.map((n) => `<li>${esc(n)}</li>`).join("") + "</ul>" : "");
   $("banner").hidden = false;
 }

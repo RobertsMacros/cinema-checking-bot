@@ -13,17 +13,19 @@ import json
 import logging
 from pathlib import Path
 
+from cinema_digest.main import setup_logging
 from cinema_digest.webapp import build_payload
 from cinema_digest.webapp_template import PAGE_HTML
 
 OUT_DIR = Path(__file__).resolve().parent / "public"
 
+logger = logging.getLogger("cinema_digest.build_static")
+
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(name)s %(levelname)s %(message)s",
-    )
+    # Redacts API keys from logs: request errors include the full URL, and
+    # Netlify keeps build logs.
+    setup_logging()
     OUT_DIR.mkdir(exist_ok=True)
 
     # build_payload never raises: scrape failures come back in payload["error"],
@@ -34,7 +36,7 @@ def main() -> None:
     html = PAGE_HTML.replace('window.FILMS_URL || "/api/films"', '"films.json"')
     (OUT_DIR / "index.html").write_text(html, encoding="utf-8")
 
-    logging.info(
+    logger.info(
         "Wrote %d films to %s (error=%s)", payload["count"], OUT_DIR, payload["error"]
     )
 

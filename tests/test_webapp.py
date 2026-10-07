@@ -128,3 +128,50 @@ def test_scrape_failure_becomes_note(monkeypatch):
     assert films == []
     assert suspect is True
     assert "ConnectionError" in notes[0]
+
+
+def test_showtime_links_skip_dead_ticketing_urls(sample_film):
+    # conftest's screenings use the dead ticketing.picturehouses.com host
+    sample_film.ph_url = "https://www.picturehouses.com/movie-details/020/HO00001/test-film"
+    data = webapp.serialize_film(sample_film)
+
+    for s in data["showtimes"]:
+        assert "ticketing.picturehouses.com" not in s["url"]
+    ritzy = next(s for s in data["showtimes"] if s["cinema"] == "Ritzy")
+    assert ritzy["url"] == "https://www.picturehouses.com/movie-details/004/HO00001/test-film"
+
+
+def test_showtime_and_book_links_keep_current_session_urls(sample_film):
+    good = "https://web.picturehouses.com/order/showtimes/020-12345/seats"
+    sample_film.screenings[0].booking_url = good  # earliest Clapham screening
+    data = webapp.serialize_film(sample_film)
+
+    assert data["showtimes"][0]["url"] == good
+    assert data["booking_urls"]["Clapham"] == good
+
+
+def test_static_build_redacts_api_keys(monkeypatch, tmp_path, capsys):
+    import logging
+
+    import build_static
+
+    def fake_payload(force_refresh=False):
+        logging.getLogger("cinema_digest.enrich").error(
+            "HTTPError for url: https://www.omdbapi.com/?apikey=SECRET123&t=Film"
+        )
+        return {"films": [], "count": 0, "error": None}
+
+    monkeypatch.setattr(build_static, "build_payload", fake_payload)
+    monkeypatch.setattr(build_static, "OUT_DIR", tmp_path)
+    root = logging.getLogger("cinema_digest")
+    before = list(root.handlers)
+    try:
+        build_static.main()
+    finally:
+        root.handlers = before
+
+    err = capsys.readouterr().err
+    assert "SECRET123" not in err
+    assert "apikey=***" in err
+    assert (tmp_path / "films.json").exists()
+    assert '"films.json"' in (tmp_path / "index.html").read_text()
