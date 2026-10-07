@@ -8,6 +8,19 @@ from cinema_digest import webapp
 from cinema_digest.models import Film, Scores, Screening
 
 
+def _at_both(title, **kwargs):
+    """A film screening at every configured cinema, i.e. a complete result."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    when = datetime(2026, 3, 11, 19, 30, tzinfo=ZoneInfo("Europe/London"))
+    return Film(
+        title=title,
+        screenings=[Screening("Clapham", when, ""), Screening("Ritzy", when, "")],
+        **kwargs,
+    )
+
+
 @pytest.fixture(autouse=True)
 def clear_cache():
     """Reset the module-level cache between tests."""
@@ -41,8 +54,8 @@ def test_serialize_film_no_scores(sample_screening_weekday):
 
 
 def test_build_payload_sorts_by_metacritic(monkeypatch):
-    low = Film(title="Low", screenings=[], scores=Scores(metacritic=40))
-    high = Film(title="High", screenings=[], scores=Scores(metacritic=90))
+    low = _at_both("Low", scores=Scores(metacritic=40))
+    high = _at_both("High", scores=Scores(metacritic=90))
     monkeypatch.setattr(webapp, "build_digest", lambda config=None: ([low, high], [], False))
 
     payload = webapp.build_payload(force_refresh=True)
@@ -159,7 +172,7 @@ def test_static_build_redacts_api_keys(monkeypatch, tmp_path, capsys):
         logging.getLogger("cinema_digest.enrich").error(
             "HTTPError for url: https://www.omdbapi.com/?apikey=SECRET123&t=Film"
         )
-        return {"films": [], "count": 0, "error": None}
+        return {"films": [], "count": 1, "error": None}
 
     monkeypatch.setattr(build_static, "build_payload", fake_payload)
     monkeypatch.setattr(build_static, "OUT_DIR", tmp_path)
@@ -224,7 +237,7 @@ def test_setup_logging_does_not_duplicate_handlers():
 
 def test_failed_scrape_keeps_cached_films(monkeypatch):
     results = [
-        ([Film(title="Good", screenings=[])], [], False),
+        ([_at_both("Good")], [], False),
         ([], ["Scraping failed with an unexpected error (ConnectionError)."], True),
     ]
     monkeypatch.setattr(webapp, "build_digest", lambda config=None: results.pop(0))
@@ -285,7 +298,7 @@ def test_concurrent_forced_refreshes_coalesce(monkeypatch):
 def test_empty_refresh_keeps_cached_films_even_if_not_flagged(monkeypatch):
     # e.g. a markup change: pages load fine but nothing parses
     results = [
-        ([Film(title="Good", screenings=[])], [], False),
+        ([_at_both("Good")], [], False),
         ([], [], False),
     ]
     monkeypatch.setattr(webapp, "build_digest", lambda config=None: results.pop(0))
@@ -419,3 +432,35 @@ def test_page_rerenders_periodically():
     from cinema_digest.webapp_template import PAGE_HTML
 
     assert "setInterval(render," in PAGE_HTML
+
+
+def test_static_build_fails_when_no_films(monkeypatch, tmp_path):
+    import build_static
+
+    monkeypatch.setattr(
+        build_static, "build_payload",
+        lambda force_refresh=False: {"films": [], "count": 0, "error": "Timeout"},
+    )
+    monkeypatch.setattr(build_static, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(build_static, "setup_logging", lambda: None)
+
+    with pytest.raises(SystemExit) as exc:
+        build_static.main()
+    assert exc.value.code == 1
+    # Nothing written, so Netlify keeps the last working deploy
+    assert not (tmp_path / "films.json").exists()
+
+
+def test_first_scrape_missing_a_cinema_is_flagged(monkeypatch):
+    # No cache yet: compare against the configured cinemas, not the cache
+    clapham_only = _clapham_and_ritzy()[0]
+    monkeypatch.setattr(
+        webapp, "build_digest", lambda config=None: ([clapham_only], [], False)
+    )
+
+    payload = webapp.build_payload(force_refresh=True)
+
+    assert payload["cinemas"] == ["Clapham"]  # shown, as there is nothing better
+    assert payload["warning"]  # flagged as suspect
+    assert any("Ritzy" in n for n in payload["notes"])
+    assert not webapp._has_recent_good_result(webapp.time.monotonic())

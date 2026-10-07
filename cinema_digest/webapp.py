@@ -28,7 +28,7 @@ from zoneinfo import ZoneInfo
 from flask import Flask, jsonify, request
 
 from cinema_digest import considering
-from cinema_digest.config import RUN_TIME_BUDGET_SECONDS, Config
+from cinema_digest.config import CINEMAS, RUN_TIME_BUDGET_SECONDS, Config
 from cinema_digest.enrich import enrich_films
 from cinema_digest.filters import filter_screenings
 from cinema_digest.formatter import (
@@ -173,13 +173,13 @@ def get_films(force_refresh: bool = False) -> _Cache:
             films, notes, suspect = build_digest()
             # Two busy cinemas never have an empty week, so no films means a
             # failed fetch or a page change; suspect means a cinema failed;
-            # a cinema the last result had but this one lacks means its page
-            # parsed to nothing (which the scraper only warns about).
-            missing = _cinemas(_cache.films or []) - _cinemas(films)
+            # a configured cinema with no films means its page parsed to
+            # nothing (which the scraper only warns about).
+            missing = set(CINEMAS) - _cinemas(films)
             failed = not films or suspect or bool(missing)
             problem = "; ".join(notes) or (
                 f"The refresh found no listings for {', '.join(sorted(missing))}."
-                if missing else "The refresh found no listings."
+                if films else "The refresh found no listings."
             )
             if failed and _has_recent_good_result(time.monotonic()):
                 # Keep the last complete listings rather than losing a cinema.
@@ -196,9 +196,13 @@ def get_films(force_refresh: bool = False) -> _Cache:
                 _cache.error = problem
                 logger.warning("Refresh found no films: %s", problem)
             else:
+                # Possibly partial (no recent complete result to prefer); flag
+                # it so the page warns and it is never treated as complete.
+                if missing and problem not in notes:
+                    notes = [*notes, problem]
                 _cache.films = films
                 _cache.notes = notes
-                _cache.listings_suspect = suspect
+                _cache.listings_suspect = suspect or bool(missing)
                 _cache.fetched_at = datetime.now(LONDON_TZ)
                 _cache.fetched_mono = time.monotonic()
                 _cache.error = None

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from pathlib import Path
 
 from cinema_digest.main import setup_logging
@@ -28,9 +29,14 @@ def main() -> None:
     setup_logging()
     OUT_DIR.mkdir(exist_ok=True)
 
-    # build_payload never raises: scrape failures come back in payload["error"],
-    # so the site still deploys and shows the error instead of failing the build.
+    # build_payload never raises: scrape failures come back in payload["error"].
     payload = build_payload(force_refresh=True)
+    if payload["count"] == 0:
+        # Fail the build so Netlify keeps the last working deploy rather than
+        # replacing it with an error page. A partial result (one cinema
+        # missing) still deploys, with a warning banner.
+        logger.error("No films fetched, failing the build: %s", payload["error"])
+        sys.exit(1)
     (OUT_DIR / "films.json").write_text(json.dumps(payload), encoding="utf-8")
 
     html = PAGE_HTML.replace('window.FILMS_URL || "/api/films"', '"films.json"')
