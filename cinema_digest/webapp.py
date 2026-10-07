@@ -232,6 +232,9 @@ def build_payload(force_refresh: bool = False) -> dict:
 # ---------------------------------------------------------------------------
 
 def create_app() -> Flask:
+    # Here rather than in main() so WSGI servers (gunicorn) get it too:
+    # redacts API keys that requests puts in HTTP error messages.
+    setup_logging()
     app = Flask(__name__)
 
     @app.route("/")
@@ -262,9 +265,6 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "5000")))
     parser.add_argument("--debug", action="store_true", help="Enable Flask debug mode")
     args = parser.parse_args()
-
-    # Redacts API keys that requests puts in HTTP error messages.
-    setup_logging()
 
     app = create_app()
     logger.info("Starting cinema web app on http://%s:%d", args.host, args.port)

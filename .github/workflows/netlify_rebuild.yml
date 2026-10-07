@@ -1,0 +1,24 @@
+name: Rebuild website
+
+# The hosted site is a build-time snapshot (build_static.py), so rebuild it
+# daily to pick up new showtimes. Needs a Netlify build hook URL in the
+# NETLIFY_BUILD_HOOK secret; does nothing until that is set.
+on:
+  schedule:
+    # 05:47 UTC = 06:47 BST / 05:47 GMT
+    - cron: '47 5 * * *'
+  workflow_dispatch:
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Netlify build
+        env:
+          NETLIFY_BUILD_HOOK: ${{ secrets.NETLIFY_BUILD_HOOK }}
+        run: |
+          if [ -z "$NETLIFY_BUILD_HOOK" ]; then
+            echo "::warning::NETLIFY_BUILD_HOOK secret is not set; skipping rebuild."
+            exit 0
+          fi
+          curl -fsS -X POST -d '{}' "$NETLIFY_BUILD_HOOK"

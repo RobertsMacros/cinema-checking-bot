@@ -12,7 +12,7 @@ PAGE_HTML = r"""<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Cinema Listings — Clapham &amp; Ritzy</title>
-<script>window.FILMS_URL = window.FILMS_URL || "/api/films";</script>
+<script>window.FILMS_URL = window.FILMS_URL || "/api/films"; window.STATIC_SNAPSHOT = false;</script>
 <style>
   :root {
     --ph-pink: #E2124D;
@@ -290,6 +290,7 @@ function showtimesHtml(film) {
 
 function bookingHtml(film) {
   const cinemas = Object.keys(film.booking_urls).sort()
+    .filter((c) => film.cinemas.includes(c))
     .filter((c) => !state.cinema || c === state.cinema);
   if (cinemas.length === 0) return "";
   if (cinemas.length === 1) {
@@ -316,6 +317,16 @@ function cardHtml(film) {
     <div class="scores">${scores}</div>
     ${bookingHtml(film)}
   </div>`;
+}
+
+// Drop showtimes that have already started: a static snapshot (or a page
+// left open) can be hours old. Films with nothing left are hidden.
+function upcoming(films) {
+  const now = Date.now();
+  return (films || []).map((f) => {
+    const showtimes = f.showtimes.filter((s) => Date.parse(s.iso) > now);
+    return { ...f, showtimes, cinemas: [...new Set(showtimes.map((s) => s.cinema))].sort() };
+  }).filter((f) => f.showtimes.length > 0);
 }
 
 function matches(film) {
@@ -347,16 +358,18 @@ function render() {
   if (!data) return;
   renderBanner(data);
   if (data.error && (!data.films || data.films.length === 0)) {
-    $("content").innerHTML = `<div class="state error">Couldn't fetch listings: ${esc(data.error)}<br>Try Refresh in a moment.</div>`;
+    const retry = window.STATIC_SNAPSHOT ? "Try again later." : "Try Refresh in a moment.";
+    $("content").innerHTML = `<div class="state error">Couldn't fetch listings: ${esc(data.error)}<br>${retry}</div>`;
     $("resultCount").textContent = "";
   } else {
-    const films = data.films.filter(matches);
+    const live = upcoming(data.films);
+    const films = live.filter(matches);
     if (films.length === 0) {
       $("content").innerHTML = '<div class="state">No films match your filters.</div>';
     } else {
       $("content").innerHTML = '<div class="grid">' + films.map(cardHtml).join("") + '</div>';
     }
-    const total = data.films.length;
+    const total = live.length;
     const label = films.length === total ? `${total} films` : `${films.length} of ${total} films`;
     $("resultCount").textContent = label + (state.cinema ? ` · ${state.cinema}` : "");
   }
@@ -366,6 +379,8 @@ function render() {
 $("search").addEventListener("input", (e) => { state.search = e.target.value.trim(); render(); });
 $("hlOnly").addEventListener("change", (e) => { state.highlightedOnly = e.target.checked; render(); });
 $("refresh").addEventListener("click", () => load(true));
+// A static snapshot only changes when the site is rebuilt, so Refresh can't help.
+if (window.STATIC_SNAPSHOT) $("refresh").hidden = true;
 
 load(false);
 </script>

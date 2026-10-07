@@ -48,13 +48,16 @@ class RedactingFilter(logging.Filter):
 
 def setup_logging(verbose: bool = False) -> None:
     level = logging.DEBUG if verbose else logging.INFO
+    root = logging.getLogger("cinema_digest")
+    root.setLevel(level)
+    # Safe to call more than once (the web app sets it up on import too).
+    if any(isinstance(f, RedactingFilter) for h in root.handlers for f in h.filters):
+        return
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(
         logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s")
     )
     handler.addFilter(RedactingFilter())
-    root = logging.getLogger("cinema_digest")
-    root.setLevel(level)
     root.addHandler(handler)
 
 

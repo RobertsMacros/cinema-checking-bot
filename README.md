@@ -104,6 +104,21 @@ gunicorn cinema_digest.webapp:app --bind 0.0.0.0:8080 --timeout 120
 Use a generous timeout: the first request after the cache expires triggers a
 scrape + enrichment that can take up to a minute.
 
+### Netlify (static snapshot)
+
+`netlify.toml` builds a static copy with `build_static.py`. The listings are
+collected at build time, so the site needs rebuilding to stay current; the
+page hides showtimes that have already started and has no Refresh button.
+
+`.github/workflows/netlify_rebuild.yml` rebuilds it daily. To turn it on:
+
+1. Link the Netlify project to this repo (Project configuration → Build &
+   deploy → Link repository). Build hooks only work for linked projects.
+2. Create a build hook (Project configuration → Build & deploy → Build hooks).
+3. Add its URL as the repo secret `NETLIFY_BUILD_HOOK`.
+
+Until the secret exists the workflow logs a warning and does nothing.
+
 ## Running tests
 
 ```bash

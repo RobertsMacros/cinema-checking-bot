@@ -34,6 +34,7 @@ def main() -> None:
     (OUT_DIR / "films.json").write_text(json.dumps(payload), encoding="utf-8")
 
     html = PAGE_HTML.replace('window.FILMS_URL || "/api/films"', '"films.json"')
+    html = html.replace("window.STATIC_SNAPSHOT = false", "window.STATIC_SNAPSHOT = true")
     (OUT_DIR / "index.html").write_text(html, encoding="utf-8")
 
     logger.info(

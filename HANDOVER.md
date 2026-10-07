@@ -61,9 +61,7 @@ Suggested implementation:
 
 ## 2. Other issues to review
 
-1. **The hosted site has no refresh schedule.** Its data is a snapshot from the last Netlify build, so the "Refresh" button only reloads that snapshot. A scheduled rebuild is needed, at least daily. Options:
-   - a GitHub Actions cron that triggers a Netlify build hook
-   - a Netlify Scheduled Function that POSTs to a build hook
+1. **Daily rebuild needs turning on.** `.github/workflows/netlify_rebuild.yml` POSTs to a Netlify build hook every day. It does nothing until the repo secret `NETLIFY_BUILD_HOOK` is set, and build hooks only work once the project is linked to the repo (item 2). Steps are in the README under "Netlify (static snapshot)". Meanwhile the page hides showtimes that have already started.
 2. **Netlify is not linked to GitHub.** The first deploy was uploaded through the Netlify CLI, so pushing to the repo does not redeploy. Link the repo in the Netlify UI (Project configuration → Build & deploy → Link repository), or deploy from CI.
 3. **Booking links** come from Data Thistle `booking_url`s plus `ph_url` matched by normalised title against the Picturehouse what's-on page (`enrich._enrich_ph_links`). That title matching is fragile, and the new source makes it unnecessary.
 4. **Build time on Netlify.** The build runs the whole pipeline, including enrichment, within `RUN_TIME_BUDGET_SECONDS` (8 min). Going from about 6 films to about 70 will make enrichment much slower. Check that builds stay inside Netlify's limits and that the enrichment caches (`.cache/`) are used well. Netlify does not keep `.cache/` between builds unless it is told to.
@@ -73,7 +71,7 @@ Suggested implementation:
 
 - Both cinemas return realistic counts (dozens of films, about 10–25 showtimes a day each) in both the email and the web app.
 - Tests pass with no network access (`pytest tests/`).
-- The hosted site rebuilds automatically at least daily, and pushes to the repo deploy.
+- The hosted site rebuilds daily (the `NETLIFY_BUILD_HOOK` secret is set), and pushes to the repo deploy.
 - Docs (`README.md`, `EXPECTATIONS.md`) still match the code after the source change.
 
 ## How to run

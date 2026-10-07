@@ -165,6 +165,9 @@ def test_static_build_redacts_api_keys(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(build_static, "OUT_DIR", tmp_path)
     root = logging.getLogger("cinema_digest")
     before = list(root.handlers)
+    # Importing the web app already installed a handler bound to the real
+    # stderr; start clean so the one build_static installs writes to capsys.
+    root.handlers = []
     try:
         build_static.main()
     finally:
@@ -174,4 +177,46 @@ def test_static_build_redacts_api_keys(monkeypatch, tmp_path, capsys):
     assert "SECRET123" not in err
     assert "apikey=***" in err
     assert (tmp_path / "films.json").exists()
-    assert '"films.json"' in (tmp_path / "index.html").read_text()
+    html = (tmp_path / "index.html").read_text()
+    assert 'window.FILMS_URL = "films.json"' in html
+    assert "window.STATIC_SNAPSHOT = true" in html
+
+
+def _redacting_handlers():
+    import logging
+
+    from cinema_digest.main import RedactingFilter
+
+    root = logging.getLogger("cinema_digest")
+    return [h for h in root.handlers if any(isinstance(f, RedactingFilter) for f in h.filters)]
+
+
+def test_wsgi_app_installs_log_redaction():
+    # gunicorn imports webapp.app and never calls main()
+    import logging
+
+    root = logging.getLogger("cinema_digest")
+    before = list(root.handlers)
+    root.handlers = []
+    try:
+        webapp.create_app()
+        assert len(_redacting_handlers()) == 1
+    finally:
+        root.handlers = before
+
+
+def test_setup_logging_does_not_duplicate_handlers():
+    import logging
+
+    from cinema_digest.main import setup_logging
+
+    root = logging.getLogger("cinema_digest")
+    before = list(root.handlers)
+    root.handlers = []
+    try:
+        setup_logging()
+        setup_logging()
+        webapp.create_app()
+        assert len(root.handlers) == 1
+    finally:
+        root.handlers = before
