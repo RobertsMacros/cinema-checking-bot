@@ -86,6 +86,11 @@ and caches results in memory (default 30 min, set `CACHE_TTL_SECONDS`) so
 repeat visits are instant. The same `OMDB_API_KEY` / `TMDB_API_KEY` env vars
 apply (scores also fall back to direct scraping without them).
 
+A refresh that fails keeps the last good listings and says so on the page.
+Refreshes are rate limited: no new scrape starts within 60 seconds of the
+last one (set `REFRESH_COOLDOWN_SECONDS`), since each takes minutes and uses
+OMDb/TMDB quota.
+
 ### Options
 
 ```bash

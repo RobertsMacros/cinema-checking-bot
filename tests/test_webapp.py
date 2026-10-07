@@ -220,3 +220,63 @@ def test_setup_logging_does_not_duplicate_handlers():
         assert len(root.handlers) == 1
     finally:
         root.handlers = before
+
+
+def test_failed_scrape_keeps_cached_films(monkeypatch):
+    results = [
+        ([Film(title="Good", screenings=[])], [], False),
+        ([], ["Scraping failed with an unexpected error (ConnectionError)."], True),
+    ]
+    monkeypatch.setattr(webapp, "build_digest", lambda config=None: results.pop(0))
+    monkeypatch.setattr(webapp, "REFRESH_COOLDOWN_SECONDS", 0)
+
+    first = webapp.build_payload(force_refresh=True)
+    second = webapp.build_payload(force_refresh=True)
+
+    assert [f["title"] for f in second["films"]] == ["Good"]
+    assert "ConnectionError" in second["error"]
+    assert second["fetched_at"] == first["fetched_at"]  # still the good load's time
+
+
+def test_forced_refreshes_within_cooldown_reuse_last_run(monkeypatch):
+    calls = {"n": 0}
+
+    def fake_build(config=None):
+        calls["n"] += 1
+        return [Film(title="Once", screenings=[])], [], False
+
+    monkeypatch.setattr(webapp, "build_digest", fake_build)
+    for _ in range(5):
+        webapp.get_films(force_refresh=True)
+    assert calls["n"] == 1
+
+
+def test_concurrent_forced_refreshes_coalesce(monkeypatch):
+    import threading
+    import time as _time
+
+    calls = {"n": 0}
+    started = threading.Event()
+
+    def slow_build(config=None):
+        calls["n"] += 1
+        started.set()
+        _time.sleep(0.3)
+        return [Film(title="Once", screenings=[])], [], False
+
+    monkeypatch.setattr(webapp, "build_digest", slow_build)
+    monkeypatch.setattr(webapp, "REFRESH_COOLDOWN_SECONDS", 0)  # isolate coalescing
+
+    first = threading.Thread(target=webapp.get_films, kwargs={"force_refresh": True})
+    first.start()
+    started.wait()
+    # These arrive while the first run holds the lock
+    waiters = [
+        threading.Thread(target=webapp.get_films, kwargs={"force_refresh": True})
+        for _ in range(4)
+    ]
+    for t in waiters:
+        t.start()
+    for t in [first, *waiters]:
+        t.join()
+    assert calls["n"] == 1
