@@ -103,11 +103,14 @@ The module exposes a WSGI `app`, so any WSGI server works:
 
 ```bash
 pip install gunicorn
-gunicorn cinema_digest.webapp:app --bind 0.0.0.0:8080 --timeout 120
+gunicorn cinema_digest.webapp:app --bind 0.0.0.0:8080 --timeout 600
 ```
 
-Use a generous timeout: the first request after the cache expires triggers a
-scrape + enrichment that can take up to a minute.
+The timeout must exceed the pipeline's worst case: the first request after
+the cache expires runs the scrape plus score enrichment, which is capped by
+`RUN_TIME_BUDGET_SECONDS` (8 minutes) in `cinema_digest/config.py` and is
+usually much quicker. With a shorter timeout gunicorn can kill the worker
+mid-refresh, and the cache never fills.
 
 ### Netlify (static snapshot)
 
