@@ -1,0 +1,12 @@
+[build]
+  command = "pip install -r requirements.txt && python build_static.py"
+  publish = "public"
+
+[build.environment]
+  PYTHON_VERSION = "3.11"
+
+# Listings change daily; don't let browsers/CDN hold stale data for long.
+[[headers]]
+  for = "/films.json"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"

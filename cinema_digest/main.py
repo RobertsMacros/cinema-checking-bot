@@ -14,7 +14,7 @@ from cinema_digest.emailer import send_digest
 from cinema_digest.enrich import enrich_films
 from cinema_digest.filters import filter_screenings
 from cinema_digest.formatter import digest_warning, format_digest, format_digest_html
-from cinema_digest.models import ScrapeResult
+from cinema_digest.models import Film, ScrapeResult
 from cinema_digest.scraper import scrape_all
 
 logger = logging.getLogger("cinema_digest")
@@ -46,15 +46,33 @@ class RedactingFilter(logging.Filter):
         return True
 
 
+def enrichment_notes(films: list[Film], omdb_problems: list[str]) -> list[str]:
+    """Notes explaining missing or unfinished scores after enrich_films()."""
+    notes = []
+    if all(f.scores is None or f.scores.imdb is None for f in films):
+        reason = "; ".join(omdb_problems) or "no film matched on OMDb or IMDb"
+        logger.warning("No IMDb scores this run: %s", reason)
+        notes.append(f"IMDb scores unavailable this week ({reason}).")
+    incomplete = sum(1 for f in films if f.scores_incomplete)
+    if incomplete:
+        notes.append(
+            f"Scores for {incomplete} film(s) could not be fetched within the time limit."
+        )
+    return notes
+
+
 def setup_logging(verbose: bool = False) -> None:
     level = logging.DEBUG if verbose else logging.INFO
+    root = logging.getLogger("cinema_digest")
+    root.setLevel(level)
+    # Safe to call more than once (the web app sets it up on import too).
+    if any(isinstance(f, RedactingFilter) for h in root.handlers for f in h.filters):
+        return
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(
         logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s")
     )
     handler.addFilter(RedactingFilter())
-    root = logging.getLogger("cinema_digest")
-    root.setLevel(level)
     root.addHandler(handler)
 
 
@@ -120,15 +138,7 @@ def main() -> None:
             tmdb_api_key=config.tmdb_api_key,
             time_budget=max(0.0, remaining),
         ) or []
-        if all(f.scores is None or f.scores.imdb is None for f in filtered):
-            reason = "; ".join(omdb_problems) or "no film matched on OMDb or IMDb"
-            logger.warning("No IMDb scores this run: %s", reason)
-            notes.append(f"IMDb scores unavailable this week ({reason}).")
-        incomplete = sum(1 for f in filtered if f.scores_incomplete)
-        if incomplete:
-            notes.append(
-                f"Scores for {incomplete} film(s) could not be fetched within the time limit."
-            )
+        notes.extend(enrichment_notes(filtered, omdb_problems))
 
     # 4. Format
     warning = digest_warning(filtered, scraped.listings_suspect)

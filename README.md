@@ -63,6 +63,72 @@ python -m cinema_digest.main
 python -m cinema_digest.main --dry-run -v
 ```
 
+## Interactive web app
+
+As well as the scheduled email, the same listings are available as a live,
+interactive website you can open whenever you want and filter by cinema.
+
+```bash
+pip install -r requirements.txt
+python -m cinema_digest.webapp
+```
+
+Then open <http://127.0.0.1:5000>. The page lets you:
+
+- **Filter by cinema** (All / Clapham / Ritzy) — a film's showtimes and booking
+  buttons narrow to just the selected cinema.
+- **Search** by title, director, or logline.
+- Toggle **Highlights only** (Metacritic ≥ 76 or IMDb ≥ 7.7).
+- **Refresh** to force a fresh scrape.
+
+It reuses the exact scrape → filter → enrich pipeline that powers the email,
+and caches results in memory (default 30 min, set `CACHE_TTL_SECONDS`) so
+repeat visits are instant. The same `OMDB_API_KEY` / `TMDB_API_KEY` env vars
+apply (scores also fall back to direct scraping without them).
+
+A refresh that fails, or loses one cinema, keeps the last complete listings
+(if under a day old) and says so on the page; an empty result is retried
+after the cooldown rather than cached.
+Refreshes are rate limited: no new scrape starts within 60 seconds of the
+last one (set `REFRESH_COOLDOWN_SECONDS`), since each takes minutes and uses
+OMDb/TMDB quota.
+
+### Options
+
+```bash
+python -m cinema_digest.webapp --host 0.0.0.0 --port 8080   # bind publicly
+```
+
+### Hosting it
+
+The module exposes a WSGI `app`, so any WSGI server works:
+
+```bash
+pip install gunicorn
+gunicorn cinema_digest.webapp:app --bind 0.0.0.0:8080 --timeout 600
+```
+
+The timeout must exceed the pipeline's worst case: the first request after
+the cache expires runs the scrape plus score enrichment, which is capped by
+`RUN_TIME_BUDGET_SECONDS` (8 minutes) in `cinema_digest/config.py` and is
+usually much quicker. With a shorter timeout gunicorn can kill the worker
+mid-refresh, and the cache never fills.
+
+### Netlify (static snapshot)
+
+`netlify.toml` builds a static copy with `build_static.py`. The listings are
+collected at build time, so the site needs rebuilding to stay current; the
+page hides showtimes that have already started and has no Refresh button.
+
+`.github/workflows/netlify_rebuild.yml` rebuilds it daily. To turn it on:
+
+1. Link the Netlify project to this repo (Project configuration → Build &
+   deploy → Link repository). Build hooks only work for linked projects.
+2. Create a build hook (Project configuration → Build & deploy → Build hooks).
+3. Add its URL as the repo secret `NETLIFY_BUILD_HOOK`.
+
+Until the secret exists the workflow logs a warning and does nothing.
+
 ## Running tests
 
 ```bash
