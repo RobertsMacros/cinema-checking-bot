@@ -68,10 +68,12 @@ class _Cache:
         self.films: list[Film] | None = None
         self.notes: list[str] = []
         self.listings_suspect: bool = False
-        self.fetched_at: datetime | None = None
+        self.fetched_at: datetime | None = None  # London time, for display
         self.error: str | None = None
+        # time.monotonic() values: wall-clock London times jump at DST changes
+        self.fetched_mono: float | None = None
         # When the last pipeline run finished, successful or not
-        self.attempted_at: datetime | None = None
+        self.attempted_mono: float | None = None
         self.lock = threading.Lock()
 
 
@@ -112,18 +114,18 @@ def build_digest(config: Config | None = None) -> tuple[list[Film], list[str], b
     return filtered, notes, scraped.listings_suspect
 
 
-def _is_fresh(now: datetime) -> bool:
+def _is_fresh(now: float) -> bool:
     return (
         _cache.films is not None
-        and _cache.fetched_at is not None
-        and (now - _cache.fetched_at).total_seconds() < CACHE_TTL_SECONDS
+        and _cache.fetched_mono is not None
+        and now - _cache.fetched_mono < CACHE_TTL_SECONDS
     )
 
 
-def _recently_attempted(now: datetime) -> bool:
+def _recently_attempted(now: float) -> bool:
     return (
-        _cache.attempted_at is not None
-        and (now - _cache.attempted_at).total_seconds() < REFRESH_COOLDOWN_SECONDS
+        _cache.attempted_mono is not None
+        and now - _cache.attempted_mono < REFRESH_COOLDOWN_SECONDS
     )
 
 
@@ -134,14 +136,14 @@ def get_films(force_refresh: bool = False) -> _Cache:
     reuse a run that finished meanwhile, and no new run starts within
     REFRESH_COOLDOWN_SECONDS of the last one (forced or after a failure).
     """
-    requested_at = datetime.now(LONDON_TZ)
+    requested_at = time.monotonic()
     if _is_fresh(requested_at) and not force_refresh:
         return _cache
 
     with _cache.lock:
-        now = datetime.now(LONDON_TZ)
+        now = time.monotonic()
         # Another thread finished a run while we waited for the lock.
-        if _cache.attempted_at is not None and _cache.attempted_at >= requested_at:
+        if _cache.attempted_mono is not None and _cache.attempted_mono >= requested_at:
             return _cache
         # A run finished moments ago (successful or not): don't start another.
         if _recently_attempted(now):
@@ -150,22 +152,23 @@ def get_films(force_refresh: bool = False) -> _Cache:
             return _cache
         try:
             films, notes, suspect = build_digest()
-            if not films and suspect and _cache.films:
-                # The scrape failed outright (e.g. a network error). Keep the
-                # last good listings rather than replacing them with nothing.
-                _cache.error = "; ".join(notes) or "Listings could not be fetched."
+            if not films and _cache.films:
+                # Two busy cinemas never have an empty week, so this is a
+                # failed fetch or a page change. Keep the last good listings.
+                _cache.error = "; ".join(notes) or "The refresh found no listings."
                 logger.warning("Refresh failed, keeping cached films: %s", _cache.error)
             else:
                 _cache.films = films
                 _cache.notes = notes
                 _cache.listings_suspect = suspect
                 _cache.fetched_at = datetime.now(LONDON_TZ)
+                _cache.fetched_mono = time.monotonic()
                 _cache.error = None
                 logger.info("Cache refreshed: %d films", len(films))
         except Exception as e:  # noqa: BLE001 - surface any failure to the UI
             logger.exception("Unexpected error building digest")
             _cache.error = f"{type(e).__name__}: {e}"
-        _cache.attempted_at = datetime.now(LONDON_TZ)
+        _cache.attempted_mono = time.monotonic()
         return _cache
 
 

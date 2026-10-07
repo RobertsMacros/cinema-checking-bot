@@ -280,3 +280,50 @@ def test_concurrent_forced_refreshes_coalesce(monkeypatch):
     for t in [first, *waiters]:
         t.join()
     assert calls["n"] == 1
+
+
+def test_empty_refresh_keeps_cached_films_even_if_not_flagged(monkeypatch):
+    # e.g. a markup change: pages load fine but nothing parses
+    results = [
+        ([Film(title="Good", screenings=[])], [], False),
+        ([], [], False),
+    ]
+    monkeypatch.setattr(webapp, "build_digest", lambda config=None: results.pop(0))
+    monkeypatch.setattr(webapp, "REFRESH_COOLDOWN_SECONDS", 0)
+
+    webapp.build_payload(force_refresh=True)
+    payload = webapp.build_payload(force_refresh=True)
+
+    assert [f["title"] for f in payload["films"]] == ["Good"]
+    assert payload["error"] == "The refresh found no listings."
+
+
+def test_cache_timing_uses_monotonic_clock(monkeypatch):
+    # Freshness and cooldown must not use London wall-clock time, which jumps
+    # an hour at DST changes; drive a fake monotonic clock instead.
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(webapp.time, "monotonic", lambda: clock["now"])
+    calls = {"n": 0}
+
+    def fake_build(config=None):
+        calls["n"] += 1
+        return [Film(title="Once", screenings=[])], [], False
+
+    monkeypatch.setattr(webapp, "build_digest", fake_build)
+
+    webapp.get_films()
+    clock["now"] += webapp.CACHE_TTL_SECONDS - 1
+    webapp.get_films()
+    assert calls["n"] == 1  # still fresh
+
+    clock["now"] += 2
+    webapp.get_films()
+    assert calls["n"] == 2  # expired by the monotonic clock
+
+    clock["now"] += webapp.REFRESH_COOLDOWN_SECONDS - 1
+    webapp.get_films(force_refresh=True)
+    assert calls["n"] == 2  # within cooldown
+
+    clock["now"] += 2
+    webapp.get_films(force_refresh=True)
+    assert calls["n"] == 3
