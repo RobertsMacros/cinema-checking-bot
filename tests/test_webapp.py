@@ -327,3 +327,72 @@ def test_cache_timing_uses_monotonic_clock(monkeypatch):
     clock["now"] += 2
     webapp.get_films(force_refresh=True)
     assert calls["n"] == 3
+
+
+def _clapham_and_ritzy():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    when = datetime(2026, 3, 11, 19, 30, tzinfo=ZoneInfo("Europe/London"))
+    return [
+        Film(title="At Clapham", screenings=[Screening("Clapham", when, "")]),
+        Film(title="At Ritzy", screenings=[Screening("Ritzy", when, "")]),
+    ]
+
+
+def test_partial_cinema_failure_keeps_complete_cache(monkeypatch):
+    both = _clapham_and_ritzy()
+    results = [
+        (both, [], False),
+        ([both[0]], ["Could not fetch the Ritzy listings (ConnectionError)."], True),
+    ]
+    monkeypatch.setattr(webapp, "build_digest", lambda config=None: results.pop(0))
+    monkeypatch.setattr(webapp, "REFRESH_COOLDOWN_SECONDS", 0)
+
+    webapp.build_payload(force_refresh=True)
+    payload = webapp.build_payload(force_refresh=True)
+
+    assert payload["cinemas"] == ["Clapham", "Ritzy"]
+    assert "Ritzy" in payload["error"]
+
+
+def test_partial_result_replaces_a_day_old_cache(monkeypatch):
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(webapp.time, "monotonic", lambda: clock["now"])
+    both = _clapham_and_ritzy()
+    results = [
+        (both, [], False),
+        ([both[0]], ["Could not fetch the Ritzy listings (ConnectionError)."], True),
+    ]
+    monkeypatch.setattr(webapp, "build_digest", lambda config=None: results.pop(0))
+
+    webapp.build_payload(force_refresh=True)
+    clock["now"] += webapp.GOOD_RESULT_MAX_AGE_SECONDS + 1
+    payload = webapp.build_payload(force_refresh=True)
+
+    # Too old to prefer: show the partial result, flagged, not day-old listings
+    assert payload["cinemas"] == ["Clapham"]
+    assert payload["error"] is None
+    assert payload["notes"] == ["Could not fetch the Ritzy listings (ConnectionError)."]
+    assert payload["warning"]
+
+
+def test_empty_first_scrape_is_an_error_and_retries(monkeypatch):
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(webapp.time, "monotonic", lambda: clock["now"])
+    calls = {"n": 0}
+
+    def empty_build(config=None):
+        calls["n"] += 1
+        return [], ["Could not fetch the Clapham listings (Timeout)."], True
+
+    monkeypatch.setattr(webapp, "build_digest", empty_build)
+
+    payload = webapp.build_payload()
+    assert payload["films"] == []
+    assert "Clapham" in payload["error"]
+    assert payload["fetched_at"] is None  # not reported as a successful load
+
+    clock["now"] += webapp.REFRESH_COOLDOWN_SECONDS + 1
+    webapp.build_payload()  # ordinary request, no ?refresh=1
+    assert calls["n"] == 2  # retried after the cooldown, not held for the TTL

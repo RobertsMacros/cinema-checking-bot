@@ -56,6 +56,11 @@ CACHE_TTL_SECONDS = int(os.environ.get("CACHE_TTL_SECONDS", "1800"))  # 30 min
 # minutes and spends OMDb/TMDB quota, so repeated refreshes reuse the last one.
 REFRESH_COOLDOWN_SECONDS = int(os.environ.get("REFRESH_COOLDOWN_SECONDS", "60"))
 
+# How long a complete earlier result is preferred over a failed or partial
+# refresh. Past this the refresh's own result is shown, so a cinema that keeps
+# failing can't pin ever-older listings in place.
+GOOD_RESULT_MAX_AGE_SECONDS = 24 * 60 * 60
+
 
 # ---------------------------------------------------------------------------
 # Data pipeline (scrape -> filter -> enrich), with in-memory caching
@@ -129,6 +134,16 @@ def _recently_attempted(now: float) -> bool:
     )
 
 
+def _has_recent_good_result(now: float) -> bool:
+    """True when the cache holds a complete (non-suspect) result under a day old."""
+    return (
+        bool(_cache.films)
+        and not _cache.listings_suspect
+        and _cache.fetched_mono is not None
+        and now - _cache.fetched_mono < GOOD_RESULT_MAX_AGE_SECONDS
+    )
+
+
 def get_films(force_refresh: bool = False) -> _Cache:
     """Return the cache, re-running the pipeline first if it is stale.
 
@@ -152,11 +167,24 @@ def get_films(force_refresh: bool = False) -> _Cache:
             return _cache
         try:
             films, notes, suspect = build_digest()
-            if not films and _cache.films:
-                # Two busy cinemas never have an empty week, so this is a
-                # failed fetch or a page change. Keep the last good listings.
-                _cache.error = "; ".join(notes) or "The refresh found no listings."
-                logger.warning("Refresh failed, keeping cached films: %s", _cache.error)
+            # Two busy cinemas never have an empty week, so no films means a
+            # failed fetch or a page change; suspect means a cinema failed.
+            failed = not films or suspect
+            problem = "; ".join(notes) or "The refresh found no listings."
+            if failed and _has_recent_good_result(time.monotonic()):
+                # Keep the last complete listings rather than losing a cinema.
+                _cache.error = problem
+                logger.warning("Refresh failed, keeping cached films: %s", problem)
+            elif not films:
+                # Nothing to fall back on. Record the failure without marking
+                # it fresh, so the next request after the cooldown retries.
+                _cache.films = []
+                _cache.notes = notes
+                _cache.listings_suspect = True
+                _cache.fetched_at = None
+                _cache.fetched_mono = None
+                _cache.error = problem
+                logger.warning("Refresh found no films: %s", problem)
             else:
                 _cache.films = films
                 _cache.notes = notes
