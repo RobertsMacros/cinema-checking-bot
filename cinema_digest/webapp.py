@@ -134,6 +134,10 @@ def _recently_attempted(now: float) -> bool:
     )
 
 
+def _cinemas(films: list[Film]) -> set[str]:
+    return {s.cinema for f in films for s in f.screenings}
+
+
 def _has_recent_good_result(now: float) -> bool:
     """True when the cache holds a complete (non-suspect) result under a day old."""
     return (
@@ -168,9 +172,15 @@ def get_films(force_refresh: bool = False) -> _Cache:
         try:
             films, notes, suspect = build_digest()
             # Two busy cinemas never have an empty week, so no films means a
-            # failed fetch or a page change; suspect means a cinema failed.
-            failed = not films or suspect
-            problem = "; ".join(notes) or "The refresh found no listings."
+            # failed fetch or a page change; suspect means a cinema failed;
+            # a cinema the last result had but this one lacks means its page
+            # parsed to nothing (which the scraper only warns about).
+            missing = _cinemas(_cache.films or []) - _cinemas(films)
+            failed = not films or suspect or bool(missing)
+            problem = "; ".join(notes) or (
+                f"The refresh found no listings for {', '.join(sorted(missing))}."
+                if missing else "The refresh found no listings."
+            )
             if failed and _has_recent_good_result(time.monotonic()):
                 # Keep the last complete listings rather than losing a cinema.
                 _cache.error = problem

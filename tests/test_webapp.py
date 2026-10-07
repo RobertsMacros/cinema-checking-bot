@@ -396,3 +396,26 @@ def test_empty_first_scrape_is_an_error_and_retries(monkeypatch):
     clock["now"] += webapp.REFRESH_COOLDOWN_SECONDS + 1
     webapp.build_payload()  # ordinary request, no ?refresh=1
     assert calls["n"] == 2  # retried after the cooldown, not held for the TTL
+
+
+def test_refresh_missing_a_cinema_keeps_complete_cache(monkeypatch):
+    # One cinema's page parses to nothing: the scraper only warns (not suspect)
+    both = _clapham_and_ritzy()
+    results = [
+        (both, [], False),
+        ([both[0]], ["Only 0 film(s) found for Ritzy, which is unusually low."], False),
+    ]
+    monkeypatch.setattr(webapp, "build_digest", lambda config=None: results.pop(0))
+    monkeypatch.setattr(webapp, "REFRESH_COOLDOWN_SECONDS", 0)
+
+    webapp.build_payload(force_refresh=True)
+    payload = webapp.build_payload(force_refresh=True)
+
+    assert payload["cinemas"] == ["Clapham", "Ritzy"]
+    assert "Ritzy" in payload["error"]
+
+
+def test_page_rerenders_periodically():
+    from cinema_digest.webapp_template import PAGE_HTML
+
+    assert "setInterval(render," in PAGE_HTML

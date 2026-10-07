@@ -379,6 +379,8 @@ function render() {
 $("search").addEventListener("input", (e) => { state.search = e.target.value.trim(); render(); });
 $("hlOnly").addEventListener("change", (e) => { state.highlightedOnly = e.target.checked; render(); });
 $("refresh").addEventListener("click", () => load(true));
+// Re-render each minute so showtimes drop off as they start on a page left open.
+setInterval(render, 60 * 1000);
 // A static snapshot only changes when the site is rebuilt, so Refresh can't help.
 if (window.STATIC_SNAPSHOT) $("refresh").hidden = true;
 
