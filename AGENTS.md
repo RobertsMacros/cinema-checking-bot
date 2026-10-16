@@ -7,6 +7,13 @@ Follow existing repository documentation and the user's authorised scope.
 
 This repository uses `project-coordination/v1`. At the start of substantive work,
 read `.coordination/README.md`, existing task breadcrumbs and the shared claim.
+Run `python3 .coordination/report.py requests` to read queued work from this
+repository's current GitHub default branch, even in a stale checkout. Check again
+before finishing or handing over and at material work checkpoints. This applies
+equally to Codex and Claude. For a queued request, retain its task_id, roadmap_id,
+milestone_ids, exact scope and criteria when starting; publish the shared claim
+before implementation. A claim acknowledges pickup; another active actor means
+leave it to that actor. Do not silently re-claim completed or cancelled work.
 Before changing code, run `.coordination/report.py start` with the exact task UUID,
 a unique actor UUID for this chat/run, title and scope. Start only after it exits
 successfully and confirms the claim on GitHub. Another active actor means wait;

@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 
 HUB = 'RobertsMacros/project-coordination'
-VERSION = '2026-10-10.2'
+VERSION = '2026-10-16.1'
 CATEGORIES = {'account_access', 'decision', 'approval', 'files', 'api_token', 'physical'}
 
 class ReportingError(RuntimeError):
@@ -68,6 +68,35 @@ def uuid_value(value):
     if str(uuid.UUID(value)) != value:
         raise argparse.ArgumentTypeError('Use a canonical UUID')
     return value
+
+def requests(repo):
+    """Read default-branch requests without modifying the caller's checkout."""
+    entries = api(f'repos/{repo}/contents/.coordination/requests', missing=True) or []
+    if not isinstance(entries, list) or len(entries) >= 1000:
+        raise ReportingError('Request listing is incomplete or unreadable')
+    events = []
+    for entry in entries:
+        if entry.get('type') != 'file' or not re.fullmatch(r'[0-9a-f-]{36}\.json', entry.get('name','')):
+            continue
+        value = api(f"repos/{repo}/contents/.coordination/requests/{entry['name']}")
+        event = json.loads(base64.b64decode(value['content']))
+        if event.get('repository') != repo or event.get('event_id')+'.json' != entry['name']:
+            raise ReportingError('Request identity does not match its repository/path')
+        events.append(event)
+    cancelled = {e.get('undo_of') for e in events if e.get('event_type') == 'task.queue_cancelled'}
+    result = []
+    for event in sorted(events, key=lambda e:(e.get('occurred_at',''),e['event_id'])):
+        if event.get('event_type') != 'task.queued' or event['event_id'] in cancelled:
+            continue
+        task = uuid_value(event['progress_task_id'])
+        claim, _ = read(f'.coordination/claims/{key(repo,task)}.json')
+        result.append({'request_id':event['event_id'],'task_id':task,'repository':repo,
+                       'roadmap_id':event['roadmap_id'],'milestone_ids':event['milestone_ids'],
+                       'title':event['title'],'scope':event['scope'],'criteria':[event['scope']],
+                       'status':claim['event']['status'] if claim else 'queued',
+                       'actor_id':claim.get('actor_id') if claim else None,
+                       'active_claim':bool(claim and claim.get('active'))})
+    return result
 
 def write_status_md(target):
     event = target['event']
@@ -145,6 +174,8 @@ def report(args):
     if not match or match[1].split('/')[0].casefold() != 'robertsmacros':
         raise ReportingError('Checkout does not identify an owned GitHub repository')
     repo = match[1]
+    if args.command == 'requests':
+        return {'repository':repo,'requests':requests(repo)}
     git_dir = Path(git('rev-parse', '--absolute-git-dir', cwd=root))
     pending = git_dir / 'coordination-outbox'
     pending.mkdir(mode=0o700, exist_ok=True)
@@ -233,8 +264,8 @@ def report(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['start','update','retry'])
-    parser.add_argument('--actor', required=True, type=uuid_value, help='Unique UUID for this chat/run; retain across its updates')
+    parser.add_argument('command', choices=['start','update','retry','requests'])
+    parser.add_argument('--actor', type=uuid_value, help='Unique UUID for this chat/run; retain across its updates')
     parser.add_argument('--task', type=uuid_value)
     parser.add_argument('--event', type=uuid_value)
     parser.add_argument('--title'); parser.add_argument('--scope'); parser.add_argument('--summary')
@@ -245,7 +276,9 @@ def main():
     parser.add_argument('--diagnostic',action='store_true',help='Exclude a coordination-repository diagnostic from dashboard tasks')
     parser.add_argument('--commit'); parser.add_argument('--report'); parser.add_argument('--reopen',action='store_true')
     args = parser.parse_args()
-    if (args.command == 'retry' and not args.event) or (args.command != 'retry' and not args.task):
+    if args.command != 'requests' and not args.actor:
+        parser.error('Supply --actor for start/update/retry')
+    if (args.command == 'retry' and not args.event) or (args.command in {'start','update'} and not args.task):
         parser.error('Supply --event for retry or --task for start/update')
     try:
         print(json.dumps(report(args)))
