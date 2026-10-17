@@ -15,8 +15,11 @@ import uuid
 from datetime import datetime, timezone
 from urllib.parse import quote
 
-HUB = 'RobertsMacros/project-coordination'
-VERSION = '2026-10-16.1'
+HUB = 'RobertsMacros/project-coordination-data'
+# Copies of this reporter installed before the data moved still write here.
+# Read it (never write it) so their claims and progress are not missed.
+LEGACY_HUB = 'RobertsMacros/project-coordination'
+VERSION = '2026-10-17.1'
 CATEGORIES = {'account_access', 'decision', 'approval', 'files', 'api_token', 'physical'}
 
 class ReportingError(RuntimeError):
@@ -46,13 +49,37 @@ def api(endpoint, body=None, missing=False):
         raise ReportingError('GitHub did not confirm the request; do not start or duplicate work. Retry the saved event.')
     return json.loads(result.stdout)
 
-def read(path):
-    value = api(f'repos/{HUB}/contents/{path}?ref=main', missing=True)
+def read(path, hub=HUB):
+    value = api(f'repos/{hub}/contents/{path}?ref=main', missing=True)
     if value is None:
         return None, None
     if value.get('type') != 'file' or value.get('encoding') != 'base64':
         raise ReportingError('Unexpected coordination record')
     return json.loads(base64.b64decode(value['content'])), value['sha']
+
+def newer_claim(current, legacy):
+    """Choose between the same task's claim in the new hub and the legacy hub."""
+    # The legacy copy wins only when it is strictly newer. On a tie, or when the
+    # claim was already moved across, the new hub's claim keeps its SHA valid for
+    # the next write. Matches merge_contracts in app/progress.py.
+    if legacy is None or current == legacy:
+        return current
+    if current is None:
+        return legacy
+    return legacy if legacy['event']['occurred_at'] > current['event']['occurred_at'] else current
+
+def read_claim(path):
+    """Return the newest claim across both hubs and the new hub's SHA for writing."""
+    current, sha = read(path)
+    legacy, _ = read(path, LEGACY_HUB)
+    return newer_claim(current, legacy), sha
+
+def read_event(path):
+    # Events are immutable, so one found in either hub is the same record.
+    value, _ = read(path)
+    if value is None:
+        value, _ = read(path, LEGACY_HUB)
+    return value
 
 def put(path, value, sha=None):
     body = {'message': 'coordination: progress ' + str(value.get('event_id', value.get('task_id', 'record'))),
@@ -89,7 +116,7 @@ def requests(repo):
         if event.get('event_type') != 'task.queued' or event['event_id'] in cancelled:
             continue
         task = uuid_value(event['progress_task_id'])
-        claim, _ = read(f'.coordination/claims/{key(repo,task)}.json')
+        claim, _ = read_claim(f'.coordination/claims/{key(repo,task)}.json')
         result.append({'request_id':event['event_id'],'task_id':task,'repository':repo,
                        'roadmap_id':event['roadmap_id'],'milestone_ids':event['milestone_ids'],
                        'title':event['title'],'scope':event['scope'],'criteria':[event['scope']],
@@ -192,7 +219,7 @@ def report(args):
         path.unlink()
         return receipt
     claim_path = f'.coordination/claims/{key(repo, args.task)}.json'
-    previous, sha = read(claim_path)
+    previous, sha = read_claim(claim_path)
     if previous and previous.get('repository') != repo:
         raise ReportingError('Claim repository mismatch')
     if previous and previous.get('active') and previous.get('actor_id') != args.actor:
@@ -217,12 +244,12 @@ def report(args):
     else:
         if not previous or not previous.get('active') or previous['actor_id'] != args.actor:
             raise ReportingError('Acquire an active start claim with this actor before reporting progress')
-        prior_event, _ = read(f".coordination/progress/{repo.split('/')[1]}/{previous['event']['event_id']}.json")
+        prior_event = read_event(f".coordination/progress/{repo.split('/')[1]}/{previous['event']['event_id']}.json")
         if prior_event != previous['event']:
             raise ReportingError('Previous event publication is incomplete; retry '+previous['event']['event_id']+' before another update')
         contract = previous['contract']
         status = args.status
-    if args.diagnostic and repo != HUB:
+    if args.diagnostic and repo not in {HUB, LEGACY_HUB}:
         raise ReportingError('Diagnostics are restricted to the coordination repository')
     user_input = None
     if args.needs_user:

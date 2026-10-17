@@ -109,7 +109,7 @@ not wake an idle chat; running agents pick requests up at their next queue check
 
 The portable helper needs Python 3 and authenticated GitHub CLI (`gh`). It writes
 an immutable local JSON breadcrumb and publishes the same sanitised event to
-`RobertsMacros/project-coordination/.coordination/progress/`. The shared
+`RobertsMacros/project-coordination-data/.coordination/progress/`. The shared
 `.coordination/status/` Markdown file is the readable task status. The shared
 `.coordination/claims/` record captures scope and actor ownership using GitHub's
 current blob SHA. A concurrent loser cannot overwrite a changed claim. This works
