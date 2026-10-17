@@ -1,0 +1,21 @@
+{
+  "action_id": "19",
+  "actor_id": "b4c8940b-6267-4967-85e6-1a41c9e79321",
+  "breadcrumb_version": 1,
+  "event_id": "5b55ff15-8c45-4cd6-9b4a-dcb63d1b1a5d",
+  "event_type": "task.queued",
+  "evidence": "explicit_user_request",
+  "milestone_ids": [],
+  "occurred_at": "2026-10-17T07:41:40.051Z",
+  "parent_event_ids": [],
+  "progress_task_id": "4a4192fe-6f34-5bad-ab6b-c1de7453823f",
+  "project": "cinema-checking-bot",
+  "repository": "RobertsMacros/cinema-checking-bot",
+  "roadmap_id": null,
+  "schema_version": 1,
+  "scope": "Check whether Robert still needs to do this: Approve extension page access and read-only Mail access.\nWhy it was needed: The normal browser installation is unfinished.\nContext: Use the existing normal browser (Dia appears in the current workspace history); a separate browser-choice question is unnecessary. Prepare installation first. Picturehouse page access and read-only Mail access remain genuine new-permission gates. Robert’s 5 October update: re-request this access. Delivery to the existing project chat is pending; this update does not approve either permission.\nInspect this repository's code, docs and history; do not change code for this request.\nIf it is no longer needed, report done with --commit or --report naming what shows that.\nIf Robert still needs to act, report blocked with --needs-user giving the current exact ask.",
+  "source": "local-dashboard",
+  "status": "queued",
+  "task_id": "check:19",
+  "title": "Check: Approve extension page access and read-only Mail access."
+}
