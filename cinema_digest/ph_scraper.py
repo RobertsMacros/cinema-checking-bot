@@ -63,6 +63,17 @@ def split_special_title(title: str) -> tuple[str, str | None]:
     return m.group("title").strip(), label
 
 
+def _loose_key(title: str) -> str:
+    """Match key that ignores case, punctuation and the words the/a/an.
+
+    Picturehouse's special-screening titles sometimes drop an article
+    ("Dog-Friendly - Ghosts: Possession of Button House").
+    """
+    t = re.sub(r"[^\w\s]", " ", title.lower())
+    t = re.sub(r"\b(the|a|an)\b", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
 def _title_of(box: Tag) -> str | None:
     h3 = box.select_one(".hideOnMob h3") or box.select_one("h3")
     if h3 is None:
@@ -109,7 +120,7 @@ def parse_ph_listings(html: str, cinema_name: str) -> list[Film]:
                 continue
             title, special = split_special_title(raw_title)
 
-            film = films.get(title.lower())
+            film = films.get(_loose_key(title))
             if film is None:
                 link = box.select_one(".cinema_ListingBox a")
                 duration = box.select_one(".moviMint")
@@ -119,8 +130,10 @@ def parse_ph_listings(html: str, cinema_name: str) -> list[Film]:
                     # Only take the page link from the main listing, not a special one
                     ph_url=(link.get("href") if link and not special else None),
                 )
-                films[title.lower()] = film
+                films[_loose_key(title)] = film
             elif film.ph_url is None and not special:
+                # First seen as a special screening: take the main listing's title and link
+                film.title = title
                 link = box.select_one(".cinema_ListingBox a")
                 film.ph_url = link.get("href") if link else None
 
