@@ -331,20 +331,20 @@ class TestScrapeAll:
     TODAY = date(2026, 9, 26)
 
     def test_healthy_pages_have_no_warnings(self):
-        result = scrape_all(_session_returning(_cinema_html(5), _cinema_html(5)), today=self.TODAY)
+        result = scrape_all(_session_returning(_cinema_html(5), _cinema_html(5)), today=self.TODAY, ph_fetcher=None)
         assert len(result.films) == 5  # same titles merge across cinemas
         assert result.warnings == []
         assert result.listings_suspect is False
 
     def test_low_film_count_is_a_note_not_an_abort(self):
-        result = scrape_all(_session_returning(_cinema_html(1), _cinema_html(5)), today=self.TODAY)
+        result = scrape_all(_session_returning(_cinema_html(1), _cinema_html(5)), today=self.TODAY, ph_fetcher=None)
         assert len(result.films) == 5
         assert any("unusually low" in w and "Clapham" in w for w in result.warnings)
         assert result.listings_suspect is False
 
     def test_fetch_failure_keeps_other_cinema(self):
         session = _session_returning(requests.ConnectionError("down"), _cinema_html(4))
-        result = scrape_all(session, today=self.TODAY)
+        result = scrape_all(session, today=self.TODAY, ph_fetcher=None)
         assert len(result.films) == 4
         assert result.listings_suspect is True
         assert any("Could not fetch the Clapham listings" in w for w in result.warnings)
@@ -353,6 +353,7 @@ class TestScrapeAll:
         result = scrape_all(
             _session_returning(_cinema_html(5, with_times=False), _cinema_html(5, with_times=False)),
             today=self.TODAY,
+            ph_fetcher=None,
         )
         assert len(result.films) == 5
         assert result.listings_suspect is True

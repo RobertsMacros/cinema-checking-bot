@@ -13,8 +13,9 @@ from bs4 import BeautifulSoup, Tag
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from cinema_digest.config import CINEMAS, MIN_FILMS_PER_CINEMA
+from cinema_digest.config import CINEMA_URLS, CINEMAS, MIN_FILMS_PER_CINEMA
 from cinema_digest.models import Film, Screening, ScrapeResult
+from cinema_digest.ph_scraper import PicturehouseUnavailable, fetch_ph_pages, parse_ph_listings
 
 logger = logging.getLogger(__name__)
 
@@ -373,6 +374,10 @@ def merge_films(all_films: list[Film]) -> list[Film]:
                 existing.duration = film.duration
             if film.listing_url and not existing.listing_url:
                 existing.listing_url = film.listing_url
+            if film.ph_url and not existing.ph_url:
+                existing.ph_url = film.ph_url
+            if film.director and not existing.director:
+                existing.director = film.director
         else:
             merged[key] = Film(
                 title=film.title,
@@ -380,14 +385,72 @@ def merge_films(all_films: list[Film]) -> list[Film]:
                 duration=film.duration,
                 logline=film.logline,
                 listing_url=film.listing_url,
+                director=film.director,
+                ph_url=film.ph_url,
                 screenings=_dedupe_screenings(list(film.screenings)),
             )
 
     return list(merged.values())
 
 
-def scrape_all(session: requests.Session | None = None, today: date | None = None) -> ScrapeResult:
+def combine_sources(ph_films: list[Film], dt_films: list[Film]) -> tuple[list[Film], int, int]:
+    """Combine one cinema's Picturehouse and Data Thistle listings.
+
+    Picturehouse is the primary source. Data Thistle adds its year and
+    description (used to look up scores) and any film or showtime the
+    Picturehouse page did not show, so nothing listed in either place is lost.
+    Returns (films, films only on Data Thistle, showtimes only on Data Thistle).
+    """
+    combined = [
+        Film(
+            title=f.title,
+            duration=f.duration,
+            ph_url=f.ph_url,
+            screenings=list(f.screenings),
+        )
+        for f in ph_films
+    ]
+    by_title = {normalize_title(f.title): f for f in combined}
+    extra_films = 0
+    extra_times = 0
+
+    for dt in dt_films:
+        match = by_title.get(normalize_title(dt.title))
+        if match is None:
+            combined.append(dt)
+            by_title[normalize_title(dt.title)] = dt
+            extra_films += 1
+            logger.info("Only on Data Thistle: %r", dt.title)
+            continue
+        match.year = match.year or dt.year
+        match.logline = match.logline or dt.logline
+        match.listing_url = match.listing_url or dt.listing_url
+        if dt.duration and not match.duration:
+            match.duration = dt.duration
+        known = {(s.cinema, s.date) for s in match.screenings}
+        for s in dt.screenings:
+            if (s.cinema, s.date) not in known:
+                match.screenings.append(s)
+                known.add((s.cinema, s.date))
+                extra_times += 1
+                logger.info("Showtime only on Data Thistle: %r %s", dt.title, s.date)
+        match.screenings.sort(key=lambda s: s.date)
+
+    return combined, extra_films, extra_times
+
+
+_DEFAULT_PH_FETCHER = object()
+
+
+def scrape_all(
+    session: requests.Session | None = None,
+    today: date | None = None,
+    ph_fetcher=_DEFAULT_PH_FETCHER,
+) -> ScrapeResult:
     """Fetch and parse listings from all configured cinemas.
+
+    Reads each cinema's own Picturehouse page first and adds anything extra
+    that Data Thistle lists. Pass ph_fetcher=None to use Data Thistle only.
 
     Never raises for a single cinema: a failed fetch, an unusually low film
     count, or films with no readable showtimes are recorded as warnings on
@@ -397,20 +460,54 @@ def scrape_all(session: requests.Session | None = None, today: date | None = Non
     result = ScrapeResult()
     all_films: list[Film] = []
 
+    ph_pages: dict[str, str] = {}
+    if ph_fetcher is not None:
+        fetcher = fetch_ph_pages if ph_fetcher is _DEFAULT_PH_FETCHER else ph_fetcher
+        try:
+            ph_pages = fetcher(CINEMA_URLS)
+        except PicturehouseUnavailable as e:
+            logger.error("Picturehouse pages unavailable: %s", e)
+        except Exception:
+            logger.exception("Unexpected error reading the Picturehouse pages")
+
     for cinema_name, url in CINEMAS.items():
-        logger.info("Fetching listings for %s from %s", cinema_name, url)
+        ph_films: list[Film] = []
+        if cinema_name in ph_pages:
+            ph_films = parse_ph_listings(ph_pages[cinema_name], cinema_name)
+        if ph_fetcher is not None and len(ph_films) < MIN_FILMS_PER_CINEMA:
+            result.warnings.append(
+                f"The {cinema_name} Picturehouse page could not be read, so its films come "
+                f"from Data Thistle only, which can miss some films and events."
+            )
+            ph_films = []
+
+        logger.info("Fetching Data Thistle listings for %s from %s", cinema_name, url)
+        dt_films: list[Film] = []
+        dt_error: str | None = None
         try:
             html = fetch_page(url, session=s)
+            dt_films = parse_cinema(html, cinema_name, today)
         except requests.RequestException as e:
-            logger.error("Could not fetch %s listings: %s", cinema_name, e)
+            logger.error("Could not fetch %s Data Thistle listings: %s", cinema_name, e)
+            dt_error = type(e).__name__
+
+        if dt_error and not ph_films:
             result.warnings.append(
-                f"Could not fetch the {cinema_name} listings ({type(e).__name__}); "
+                f"Could not fetch the {cinema_name} listings ({dt_error}); "
                 f"{cinema_name} films are missing from this digest."
             )
             result.listings_suspect = True
             continue
 
-        films = parse_cinema(html, cinema_name, today)
+        if ph_films:
+            films, extra_films, extra_times = combine_sources(ph_films, dt_films)
+            logger.info(
+                "%s: %d films from Picturehouse, plus %d film(s) and %d showtime(s) only on Data Thistle",
+                cinema_name, len(ph_films), extra_films, extra_times,
+            )
+        else:
+            films = dt_films
+
         screening_count = sum(len(f.screenings) for f in films)
 
         if len(films) < MIN_FILMS_PER_CINEMA:

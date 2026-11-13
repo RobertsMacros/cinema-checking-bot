@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "event_id": "f4a096ac-61c3-4976-9798-5d0366adc0ae",
+  "task_id": "f5b6e1a3-09ae-4275-9e57-5bf6d92a6c55",
+  "repository": "RobertsMacros/cinema-checking-bot",
+  "actor_id": "d4a1b78c-5b04-4ce5-902a-921d38a38a96",
+  "parent_event_ids": [],
+  "status": "working",
+  "title": "Read listings from the Picturehouse pages, with Data Thistle as backup",
+  "scope": "Primary source becomes the rendered Picturehouse cinema pages (headless browser); Data Thistle adds anything missing and is the fallback. Done when a scheduled or manual digest run on main lists every film shown on both Picturehouse pages for the week.",
+  "roadmap_id": null,
+  "milestone_ids": [],
+  "occurred_at": "2026-11-13T11:00:13Z",
+  "summary": "Parser, source combining, fallback note and tests written on branch picturehouse-direct. Awaiting Robert's approval of the before and after mock-up before pushing.",
+  "evidence": [],
+  "remaining": [
+    "Robert approves mock-up",
+    "push and merge",
+    "manual workflow run confirms live page read"
+  ],
+  "blockers": []
+}
