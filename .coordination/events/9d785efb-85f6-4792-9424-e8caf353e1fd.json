@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "event_id": "9d785efb-85f6-4792-9424-e8caf353e1fd",
+  "task_id": "f5b6e1a3-09ae-4275-9e57-5bf6d92a6c55",
+  "repository": "RobertsMacros/cinema-checking-bot",
+  "actor_id": "d4a1b78c-5b04-4ce5-902a-921d38a38a96",
+  "parent_event_ids": [
+    "f4a096ac-61c3-4976-9798-5d0366adc0ae"
+  ],
+  "status": "done",
+  "title": "Read listings from the Picturehouse pages, with Data Thistle as backup",
+  "scope": "Primary source becomes the rendered Picturehouse cinema pages (headless browser); Data Thistle adds anything missing and is the fallback. Done when a scheduled or manual digest run on main lists every film shown on both Picturehouse pages for the week.",
+  "roadmap_id": null,
+  "milestone_ids": [],
+  "occurred_at": "2026-11-13T11:13:41Z",
+  "summary": "Picturehouse pages are now the primary source, Data Thistle merged in and used as fallback. Manual run read 65 Clapham and 68 Ritzy films and sent the digest with 21 films this week.",
+  "evidence": [
+    {
+      "kind": "commit",
+      "ref": "051309324dcc42f6105f44dbdaa85c9dca366224",
+      "result": "Implementation and follow-up fix on main; Tests workflow passed"
+    },
+    {
+      "kind": "test",
+      "ref": "https://github.com/RobertsMacros/cinema-checking-bot/actions/runs/43414923631",
+      "result": "Manual Cinema Digest run read both Picturehouse pages and sent the digest"
+    }
+  ],
+  "remaining": [],
+  "blockers": []
+}
