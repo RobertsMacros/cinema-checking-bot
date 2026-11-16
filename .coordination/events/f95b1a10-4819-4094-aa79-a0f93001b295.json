@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "event_id": "f95b1a10-4819-4094-aa79-a0f93001b295",
+  "task_id": "dbe57c90-c022-441c-9f2e-1626de60bbde",
+  "repository": "RobertsMacros/cinema-checking-bot",
+  "actor_id": "f6939167-7453-452d-837c-185ca19555c4",
+  "parent_event_ids": [],
+  "status": "working",
+  "title": "Fix the open problems from the 15 Nov playbook review",
+  "scope": "On branch claude/dazzling-hopper-1h5hjl only (no push to main, no merge): save the review at docs/reviews/playbook-review-2026-11-15.md; fix every section E item most serious first, plus section A mistakes still live; a failing-then-passing test per code fix; before/after HTML mock-ups for visible changes; check the real effect where possible; update CLAUDE.md, README and HANDOVER in the same commits. Account, secret, hosting, history and live-data actions are listed for Robert, not done.",
+  "roadmap_id": null,
+  "milestone_ids": [],
+  "occurred_at": "2026-11-16T07:29:57Z",
+  "summary": "Review saved; fixes starting. Shared claim not published: this session's GitHub access does not reach the coordination data repository.",
+  "evidence": [],
+  "remaining": ["Fix section E items", "Fix live section A items", "Verification table"],
+  "blockers": []
+}
