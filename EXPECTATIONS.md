@@ -7,7 +7,9 @@
 - **Must extract**: film title, year, duration, logline, screening times, booking URLs
 - **Must merge films**: same film at both cinemas should appear once with combined screenings. The merge key is title plus year: same-title films with different known years (remakes) stay separate; an undated listing joins the same-title film
 - **No repeated showtimes**: a showtime listed twice (same cinema, same start time) appears once
-- **Low film count is a note, not an abort**: fewer than 3 films at a cinema adds a note to the digest ("unusually low; the listings page may have changed"); the digest is still sent with whatever was found
+- **Low film count flags the digest, never aborts it**: fewer than 15 films at a cinema (a normal Picturehouse page lists 60 or more) adds a note and flags the subject "[CHECK: listings incomplete]"; the digest is still sent with whatever was found
+- **Picturehouse first, Data Thistle as backup**: each cinema's Picturehouse page is read in headless Chromium; Data Thistle adds year, description and anything the page lacked. If a Picturehouse page can't be read, that cinema comes from Data Thistle only, with a note and the subject flagged "[CHECK: listings incomplete]"
+- **Run report**: with `--report DIR`, every run saves its digest, the Picturehouse pages and `listings_check.json`; every film with a qualifying showing on a Picturehouse page must appear in the digest (`run_check` fails the run otherwise)
 - **One cinema failing doesn't stop the other**: if a cinema page can't be fetched, the digest is sent with the other cinema's films and a warning
 - **Resilient to missing data**: films without year/duration/logline should still be included; a missing year doesn't lose the duration
 - **Date headers have no year**: pick this year or next (never more than 60 days in the past); the weekday prefix decides when both fit; 29 Feb only in a leap year
@@ -40,7 +42,7 @@
 
 ### Email
 - **Always sent**: every run sends a digest, whatever was found. Problems are flagged, never silently dropped
-- **Subject flag**: "[CHECK: listings page may have changed]" when no screenings qualify; "[CHECK: listings incomplete]" when a cinema couldn't be fetched or had no readable showtimes
+- **Subject flag**: "[CHECK: listings page may have changed]" when no screenings qualify; "[CHECK: listings incomplete]" when a cinema couldn't be fetched, had no readable showtimes, had fewer than 15 films, or fell back to Data Thistle only
 - **Sent once**: the configured port is used first (465 = implicit TLS, otherwise STARTTLS); the other method is tried only if the first fails before the message is handed over. Server certificates are verified
 - **Multipart**: sends both plain text and HTML versions
 - **Dry run mode**: print to stdout + write HTML preview to `digest_preview.html`

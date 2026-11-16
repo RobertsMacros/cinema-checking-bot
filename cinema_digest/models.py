@@ -53,5 +53,11 @@ class ScrapeResult:
 
     films: list[Film] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
-    # True when a failure suggests the listings are wrong (fetch failed, no showtimes)
+    # True when the listings are probably wrong or incomplete (fetch failed, no
+    # showtimes, too few films, or a fallback to Data Thistle only). The email
+    # subject is flagged when this is set.
     listings_suspect: bool = False
+    # Where the listings came from this run, e.g. ["Picturehouse", "Data Thistle"]
+    sources: list[str] = field(default_factory=list)
+    # Rendered Picturehouse page HTML by cinema, kept for the run report
+    pages: dict[str, str] = field(default_factory=dict)

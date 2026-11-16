@@ -470,16 +470,24 @@ def scrape_all(
         except Exception:
             logger.exception("Unexpected error reading the Picturehouse pages")
 
+    result.pages = dict(ph_pages)
+
+    def used(source: str) -> None:
+        if source not in result.sources:
+            result.sources.append(source)
+
     for cinema_name, url in CINEMAS.items():
         ph_films: list[Film] = []
         if cinema_name in ph_pages:
             ph_films = parse_ph_listings(ph_pages[cinema_name], cinema_name)
-        if ph_fetcher is not None and len(ph_films) < MIN_FILMS_PER_CINEMA:
+        if ph_fetcher is not None and not ph_films:
+            # Data Thistle alone has missed most of the programme before, so
+            # this flags the subject, not just a note in the body.
             result.warnings.append(
                 f"The {cinema_name} Picturehouse page could not be read, so its films come "
-                f"from Data Thistle only, which can miss some films and events."
+                f"from Data Thistle only, which can miss most of the programme."
             )
-            ph_films = []
+            result.listings_suspect = True
 
         logger.info("Fetching Data Thistle listings for %s from %s", cinema_name, url)
         dt_films: list[Film] = []
@@ -505,17 +513,23 @@ def scrape_all(
                 "%s: %d films from Picturehouse, plus %d film(s) and %d showtime(s) only on Data Thistle",
                 cinema_name, len(ph_films), extra_films, extra_times,
             )
+            used("Picturehouse")
+            if extra_films or extra_times:
+                used("Data Thistle")
         else:
             films = dt_films
+            if dt_films:
+                used("Data Thistle")
 
         screening_count = sum(len(f.screenings) for f in films)
 
         if len(films) < MIN_FILMS_PER_CINEMA:
             logger.warning("Only %d films found for %s", len(films), cinema_name)
             result.warnings.append(
-                f"Only {len(films)} film(s) found for {cinema_name}, which is unusually low. "
-                f"The listings page may have changed."
+                f"Only {len(films)} film(s) found for {cinema_name}, which is unusually low "
+                f"(a normal week has 60 or more). The listings are probably incomplete."
             )
+            result.listings_suspect = True
         if films and screening_count == 0:
             logger.warning("%d films but no showtimes parsed for %s", len(films), cinema_name)
             result.warnings.append(

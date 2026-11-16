@@ -10,7 +10,7 @@ Automatically fetches upcoming film listings from Clapham Picturehouse and Ritzy
 2. Filters showtimes to evenings (weekdays 18:00-21:30, weekends 11:00-21:30)
 3. Enriches each film with Metacritic, IMDb, and Rotten Tomatoes scores via [OMDb API](https://www.omdbapi.com/)
 4. Formats a digest ordered by Metacritic score (highest first; unscored films last, alphabetically)
-5. Emails the result (or prints it in dry-run mode). A digest is always sent: if the listings look broken, it says so at the top and the subject line is flagged
+5. Emails the result (or prints it in dry-run mode). A digest is always sent: if the listings look broken or incomplete, it says so at the top and the subject line is flagged. That includes a cinema with fewer than 15 films (a normal week has 60 or more) and a fall back to Data Thistle because a Picturehouse page couldn't be read
 
 ## Setup
 
@@ -62,6 +62,26 @@ python -m cinema_digest.main
 ```bash
 python -m cinema_digest.main --dry-run -v
 ```
+
+### Run report: check the output, not just the exit code
+
+```bash
+python -m cinema_digest.main --dry-run --report run-report
+python -m cinema_digest.run_check run-report/listings_check.json
+```
+
+`--report DIR` saves the digest (`digest.txt`, `digest.html`), the rendered
+Picturehouse pages it was built from (`picturehouse-<cinema>.html`) and
+`listings_check.json`. For each cinema the check lists how many films the
+page showed, which of them have a showing in the digest's windows, and which
+of those are missing from the digest (this should always be empty).
+`run_check` exits 1 and says why if anything is missing, if the listings did
+not come from Picturehouse, or if the digest was flagged as incomplete.
+
+The GitHub Actions digest does both on every run: the report is uploaded as
+the run's artefact (`digest-run-<n>`, kept 30 days) and a problem turns the
+run red after the email has gone. To check without sending an email, run
+"Cinema Digest" from the Actions tab with **Dry run** ticked.
 
 ## Interactive web app
 

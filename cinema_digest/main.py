@@ -3,21 +3,28 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import re
 import sys
 import time
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from cinema_digest import considering
 from cinema_digest.config import RUN_TIME_BUDGET_SECONDS, SEND_RESERVE_SECONDS, Config
-from cinema_digest.emailer import send_digest
+from cinema_digest.emailer import build_subject, send_digest
 from cinema_digest.enrich import enrich_films
 from cinema_digest.filters import filter_screenings
 from cinema_digest.formatter import digest_warning, format_digest, format_digest_html
 from cinema_digest.models import Film, ScrapeResult
+from cinema_digest.ph_scraper import loose_key, parse_ph_listings
 from cinema_digest.scraper import scrape_all
 
 logger = logging.getLogger("cinema_digest")
+
+LONDON_TZ = ZoneInfo("Europe/London")
 
 SUBJECT_FLAG_BROKEN = "CHECK: listings page may have changed"
 SUBJECT_FLAG_INCOMPLETE = "CHECK: listings incomplete"
@@ -61,6 +68,60 @@ def enrichment_notes(films: list[Film], omdb_problems: list[str]) -> list[str]:
     return notes
 
 
+def subject_flag(films: list[Film], listings_suspect: bool) -> str | None:
+    """The "[CHECK: ...]" tag for the email subject, if the listings look wrong."""
+    if not films:
+        return SUBJECT_FLAG_BROKEN
+    if digest_warning(films, listings_suspect):
+        return SUBJECT_FLAG_INCOMPLETE
+    return None
+
+
+def listings_check(scraped: ScrapeResult, digest: list[Film], now: datetime | None = None) -> dict:
+    """Compare the digest with what the Picturehouse pages showed this run.
+
+    For each cinema page that was read: how many films it listed, which of
+    them have a showing in the digest's windows (evenings, weekends, next 7
+    days), and which of those are missing from the digest (should be none).
+    """
+    now = now or datetime.now(LONDON_TZ)
+    cinemas: dict[str, dict] = {}
+    for cinema, html in scraped.pages.items():
+        page_films = parse_ph_listings(html, cinema)
+        qualifying = sorted(f.title for f in filter_screenings(page_films, now=now))
+        in_digest = {
+            loose_key(f.title) for f in digest if any(s.cinema == cinema for s in f.screenings)
+        }
+        cinemas[cinema] = {
+            "films_on_page": len(page_films),
+            "qualifying_on_page": qualifying,
+            "missing_from_digest": [t for t in qualifying if loose_key(t) not in in_digest],
+        }
+    return {
+        "checked_at": now.isoformat(),
+        "sources": list(scraped.sources),
+        "listings_suspect": scraped.listings_suspect,
+        "warnings": list(scraped.warnings),
+        "digest_films": len(digest),
+        "cinemas": cinemas,
+    }
+
+
+def write_report(
+    directory: Path, scraped: ScrapeResult, digest: list[Film], body: str, html_body: str, subject: str
+) -> None:
+    """Save what this run produced, so its output can be checked afterwards."""
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "digest.txt").write_text(body, encoding="utf-8")
+    (directory / "digest.html").write_text(html_body, encoding="utf-8")
+    for cinema, html in scraped.pages.items():
+        (directory / f"picturehouse-{cinema}.html").write_text(html, encoding="utf-8")
+    check = listings_check(scraped, digest)
+    check["subject"] = subject
+    (directory / "listings_check.json").write_text(json.dumps(check, indent=2), encoding="utf-8")
+    logger.info("Run report written to %s", directory)
+
+
 def setup_logging(verbose: bool = False) -> None:
     level = logging.DEBUG if verbose else logging.INFO
     root = logging.getLogger("cinema_digest")
@@ -88,6 +149,11 @@ def main() -> None:
         "--verbose", "-v",
         action="store_true",
         help="Enable debug logging",
+    )
+    parser.add_argument(
+        "--report",
+        metavar="DIR",
+        help="Save the digest, the Picturehouse pages and a listings check (JSON) in DIR",
     )
     args = parser.parse_args()
 
@@ -141,15 +207,16 @@ def main() -> None:
         notes.extend(enrichment_notes(filtered, omdb_problems))
 
     # 4. Format
-    warning = digest_warning(filtered, scraped.listings_suspect)
-    subject_flag = None
-    if not filtered:
-        subject_flag = SUBJECT_FLAG_BROKEN
-    elif warning:
-        subject_flag = SUBJECT_FLAG_INCOMPLETE
+    flag = subject_flag(filtered, scraped.listings_suspect)
 
     body = format_digest(filtered, notes=notes, listings_suspect=scraped.listings_suspect)
     html_body = format_digest_html(filtered, notes=notes, listings_suspect=scraped.listings_suspect)
+
+    if args.report:
+        try:
+            write_report(Path(args.report), scraped, filtered, body, html_body, build_subject(flag))
+        except Exception:
+            logger.exception("Could not write the run report")
 
     # 5. Send
     try:
@@ -163,7 +230,7 @@ def main() -> None:
             from_addr=config.email_from,
             to_addrs=config.email_to,
             dry_run=dry_run,
-            subject_flag=subject_flag,
+            subject_flag=flag,
         )
     except Exception:
         logger.exception("Failed to send digest")

@@ -38,6 +38,16 @@ def test_actions_are_on_node_24_versions():
             assert int(version) >= minimum.get(action, 0), f"{name}: {action}@v{version}"
 
 
+def test_digest_run_saves_its_output_and_checks_it_against_the_pages():
+    text = _read("cinema_digest.yml")
+    assert "--report run-report" in text
+    assert "actions/upload-artifact@" in text
+    assert "python -m cinema_digest.run_check run-report/listings_check.json" in text
+    # A manual dry run builds everything but sends no email
+    assert re.search(r"dry_run:\s*\n\s*description:", text)
+    assert "DRY_RUN: ${{ inputs.dry_run" in text
+
+
 def test_tests_run_on_a_schedule_and_require_the_browser_tests():
     text = _read("tests.yml")
     assert re.search(r"^\s*schedule:\s*\n\s*- cron:", text, re.MULTILINE)

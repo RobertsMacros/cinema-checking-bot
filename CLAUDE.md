@@ -12,6 +12,9 @@ Follow existing repository documentation and the user's authorised scope.
   `python -m playwright install chromium`, or set
   `PLAYWRIGHT_CHROMIUM_EXECUTABLE`). Dry run: `python -m cinema_digest.main --dry-run`.
 - Live site check: `python -m cinema_digest.site_check`.
+- Digest output check: `python -m cinema_digest.main --dry-run --report DIR`
+  then `python -m cinema_digest.run_check DIR/listings_check.json`. Every
+  GitHub digest run uploads this report as an artefact.
 - Deploys: the website is deployed only by `.github/workflows/deploy_site.yml`
   (never by a manual upload). The digest runs from `cinema_digest.yml`.
 

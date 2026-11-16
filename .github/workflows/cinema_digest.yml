@@ -5,6 +5,11 @@ on:
     # Tuesday 5pm UTC = 6pm BST (UK summer) / 5pm GMT (UK winter)
     - cron: '0 17 * * 2'
   workflow_dispatch: # Allow manual trigger
+    inputs:
+      dry_run:
+        description: 'Dry run: build the digest and its run report, send no email'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -47,7 +52,24 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
-        run: python -m cinema_digest.main -v
+          DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
+        run: python -m cinema_digest.main -v --report run-report
+
+      # The digest, the Picturehouse pages it was built from and
+      # listings_check.json, so each run's output can be checked afterwards.
+      - name: Upload the run report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: digest-run-${{ github.run_number }}
+          path: run-report
+          retention-days: 30
+          if-no-files-found: warn
+
+      # The email has gone by now; this turns the run red if the digest left
+      # out a film the Picturehouse pages showed, or fell back to Data Thistle.
+      - name: Check the digest against the Picturehouse pages
+        run: python -m cinema_digest.run_check run-report/listings_check.json
 
       - name: Keep the schedule alive
         # GitHub disables scheduled workflows in public repos after 60 days

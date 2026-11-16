@@ -63,7 +63,7 @@ def split_special_title(title: str) -> tuple[str, str | None]:
     return m.group("title").strip(), label
 
 
-def _loose_key(title: str) -> str:
+def loose_key(title: str) -> str:
     """Match key that ignores case, punctuation and the words the/a/an.
 
     Picturehouse's special-screening titles sometimes drop an article
@@ -72,6 +72,9 @@ def _loose_key(title: str) -> str:
     t = re.sub(r"[^\w\s]", " ", title.lower())
     t = re.sub(r"\b(the|a|an)\b", " ", t)
     return re.sub(r"\s+", " ", t).strip()
+
+
+_loose_key = loose_key
 
 
 def _title_of(box: Tag) -> str | None:
