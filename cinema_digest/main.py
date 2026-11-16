@@ -108,7 +108,13 @@ def listings_check(scraped: ScrapeResult, digest: list[Film], now: datetime | No
 
 
 def write_report(
-    directory: Path, scraped: ScrapeResult, digest: list[Film], body: str, html_body: str, subject: str
+    directory: Path,
+    scraped: ScrapeResult,
+    digest: list[Film],
+    body: str,
+    html_body: str,
+    subject: str,
+    extra: dict | None = None,
 ) -> None:
     """Save what this run produced, so its output can be checked afterwards.
 
@@ -122,6 +128,7 @@ def write_report(
         (directory / f"picturehouse-{cinema}.html").write_text(html, encoding="utf-8")
     check = listings_check(scraped, digest)
     check["subject"] = subject
+    check.update(extra or {})
     (directory / "listings_check.json").write_text(json.dumps(check, indent=2), encoding="utf-8")
     logger.info("Run report written to %s", directory)
 
@@ -195,7 +202,8 @@ def main() -> None:
         )
 
     # 2b. Flag films on What's On's Wait and see list
-    flagged = considering.mark(filtered, considering.load())
+    wait_and_see = considering.load()
+    flagged = considering.mark(filtered, wait_and_see)
     if flagged:
         logger.info("Flagged %d film(s) from the Wait and see list", flagged)
 
@@ -222,7 +230,15 @@ def main() -> None:
 
     if args.report:
         try:
-            write_report(Path(args.report), scraped, filtered, body, html_body, build_subject(flag))
+            write_report(
+                Path(args.report), scraped, filtered, body, html_body, build_subject(flag),
+                extra={
+                    "wait_and_see_entries": len(wait_and_see),
+                    "wait_and_see_matched": flagged,
+                    "omdb_key_set": bool(config.omdb_api_key),
+                    "tmdb_key_set": bool(config.tmdb_api_key),
+                },
+            )
         except Exception:
             logger.exception("Could not write the run report")
 

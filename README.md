@@ -29,7 +29,7 @@ The scheduling examples below run `.venv/bin/python`, so the scheduled job uses 
 | Variable | Description |
 |----------|-------------|
 | `OMDB_API_KEY` | Free API key from [omdbapi.com](https://www.omdbapi.com/apikey.aspx) (1000 requests/day) |
-| `TMDB_API_KEY` | Free API key from [themoviedb.org](https://www.themoviedb.org/settings/api) (fallback for score lookups) |
+| `TMDB_API_KEY` | Free API key from [themoviedb.org](https://www.themoviedb.org/settings/api) (fallback for score lookups; without it the log warns and the run report shows `tmdb_key_set: false`) |
 | `SMTP_HOST` | SMTP server (default: `smtp.gmail.com`) |
 | `SMTP_PORT` | SMTP port (default: `587`). `465` uses implicit TLS; any other port uses STARTTLS. If the configured port fails before the message is sent, the other method is tried once (465 or 587). |
 | `SMTP_USER` | SMTP username |
@@ -42,6 +42,8 @@ For Gmail: enable 2FA, then create an [App Password](https://myaccount.google.co
 ## Films you are considering
 
 `considering.json` at the repository root lists films parked on What's On's Wait and see list (titles and years only, since this repository is public). What's On's Populate run keeps it up to date. Matching films are listed first in the digest with a pink flag saying whether their Metacritic score has cleared your bar (75 unless the entry says otherwise). Set `CONSIDERING` in the environment to the same JSON to try a list locally.
+
+As of November 2026 the file has been `[]` since it was added on 28 September: nothing from What's On has reached it yet, so no film has ever been flagged. Every run now logs the list's size, and the run report records `wait_and_see_entries` and `wait_and_see_matched`, so you can see whether it is being fed.
 
 ## Usage
 

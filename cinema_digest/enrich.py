@@ -1053,6 +1053,8 @@ def enrich_films(
 
     if not api_key:
         logger.warning("No OMDb API key configured; OMDb scores will be N/A")
+    if not tmdb_api_key:
+        logger.warning("No TMDB API key configured; the TMDB fallback for score lookups is off")
 
     if session is not None or max_workers <= 1:
         s = session or _make_session()
