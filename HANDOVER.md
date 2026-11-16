@@ -3,7 +3,7 @@
 **Repo:** `RobertsMacros/cinema-checking-bot` (public)
 **Live site:** https://clapham-ritzy-cinema.netlify.app (Netlify project `clapham-ritzy-cinema`)
 **Review this follows:** `docs/reviews/playbook-review-2026-11-15.md` (section E lists the open problems)
-**Fix branch:** `claude/dazzling-hopper-1h5hjl` (not merged; nothing here is live until it is)
+**Fixes:** branch `claude/dazzling-hopper-1h5hjl`, merged into `main` through PR #6 on 16 Nov 2026 with Robert's approval. Results per item: `docs/reviews/fixes-2026-11-16.md`. Decisions: `DECISIONS.md`
 
 ## What this project is
 
@@ -19,7 +19,7 @@ Pipeline: `scraper.scrape_all()` (Picturehouse pages through headless Chromium, 
 | Area | State |
 |---|---|
 | Listings source | Picturehouse cinema pages since 13 Nov (`105f800`), Data Thistle fills gaps and is the fallback |
-| Live website | **Still the 7 Oct manual upload.** It will stay frozen until the deploy secrets below are added and this branch is merged |
+| Live website | **Still the 7 Oct manual upload.** It stays frozen until the deploy secrets (R1) are added. Until then the daily "Deploy website" run fails red, by design |
 | Daily website deploy | `deploy_site.yml` builds in GitHub Actions, deploys with the Netlify CLI and checks the live `films.json`. It fails red without its secrets (the old `netlify_rebuild.yml` skipped and went green) |
 | Stale page warning | A static snapshot over 36 hours old shows a yellow "out of date" banner; when every showtime in it has passed, the page says so instead of "No films match your filters" |
 | Incomplete listings | Fewer than 15 films at a cinema, or a fall back to Data Thistle, flags the subject "[CHECK: listings incomplete]" (it used to be a body note only, with a floor of 3) |
@@ -33,26 +33,32 @@ Pipeline: `scraper.scrape_all()` (Picturehouse pages through headless Chromium, 
 
 ## Needs Robert
 
-These need your accounts, secrets or decisions. Nothing here has been done.
+Only what needs your accounts, secrets, settings or Mac. Everything else from the earlier list is done or moved to the follow-ups below.
 
 | # | What | Exact steps |
 |---|---|---|
-| R1 | Review this branch and merge it | Open a pull request from `claude/dazzling-hopper-1h5hjl` into `main`, read the diff and `docs/mockups/2026-11-16/index.html`, check the Tests run on the branch is green, then merge. Nothing here is live until you do |
-| R2 | Turn on the daily website deploy (fixes the frozen site) | 1. Netlify → User settings → Applications → Personal access tokens → New access token; copy it. 2. Netlify → `clapham-ritzy-cinema` → Project configuration → General → Project details → copy Project ID. 3. GitHub → this repo → Settings → Secrets and variables → Actions → New repository secret: `NETLIFY_AUTH_TOKEN` (the token) and `NETLIFY_SITE_ID` (the ID). 4. After merging (R1): Actions → Deploy website → Run workflow on `main`. 5. Check the run is green and its last step prints `OK: <n> films`. 6. Open the site and check the "Updated" time is today |
-| R3 | Prove the Picturehouse switch on real pages (the 13 Nov "done" was based on one run that never compared the digest with the pages) | After merging: Actions → Cinema Digest → Run workflow → tick **Dry run** → Run. When it finishes: the last step should print `OK: every qualifying Picturehouse film is in the digest (...)`. Download the `digest-run-<n>` artefact and open `digest.html`; compare its film list with picturehouses.com for both cinemas this week. If the step is red, the log names the missing films |
-| R4 | Check the first scheduled digest on the new code | The next Tuesday run: it should be green, the email subject should have no "[CHECK" tag, and the artefact's `listings_check.json` should show 60 or more `films_on_page` per cinema |
-| R5 | Confirm the digest send time | I moved it from 17:00 to 12:17 UTC so GitHub's delays no longer push it past Tuesday's 18:00 screenings. If you'd rather have it later, edit the `cron:` line in `.github/workflows/cinema_digest.yml` (keep the minute off :00) and the matching test in `tests/test_workflows.py` |
-| R6 | Feed the Wait and see list | `considering.json` has been `[]` since 28 Sep: What's On's Populate run has never committed to it. In the What's On repository, check that Populate writes `considering.json` to this repository (it needs push access here) and run it once with a film on Wait and see. Then check the next digest run's report shows `wait_and_see_entries` above 0 |
-| R7 | Add the TMDB key to GitHub | Get a free API key at themoviedb.org → Settings → API. GitHub → this repo → Settings → Secrets and variables → Actions → New repository secret `TMDB_API_KEY`. The next run report should show `tmdb_key_set: true` |
-| R8 | Capture a sold-out session so it can be hidden | Sold-out showings are still listed because I haven't seen how the Picturehouse page marks one, and fetching pages myself was out of scope. When a session you know is sold out is on sale (a busy Friday or preview): run the R3 dry run, download the artefact, and attach `picturehouse-<cinema>.html` (or just the film's block) to a new issue. With that saved as a fixture, `ph_scraper.parse_ph_listings` can drop sold-out sessions with a test |
-| R9 | Publish the coordination records | This session could not reach `RobertsMacros/project-coordination-data`, so the events in `.coordination/events/` from this branch (the fix task `dbe57c90-…` and the answer to queued request `check:19`: extension and Mail access are not needed here) exist only in this repo. From a machine with `gh` access to that repository, run `python3 .coordination/report.py retry --event <event id> --actor f6939167-7453-452d-837c-185ca19555c4` for each, or let the dashboard collect them once the branch is pushed |
-| R10 | Delete the old build hook secret if you ever created one | Settings → Secrets and variables → Actions: remove `NETLIFY_BUILD_HOOK` if listed (the workflow that used it is gone) |
-| R11 | Protect `main` so changes arrive through reviewed PRs | GitHub → Settings → Branches → Add branch ruleset for `main`: require a pull request before merging, require status checks to pass (the three `test` jobs), block force pushes. In this repo's history 23 of 45 commits on `main` were pushed directly, including two 1,000-line changes |
-| R12 | Choose a licence | The repository is public with no `LICENSE`, so nobody may legally reuse it. Pick one (MIT is the usual choice for a small public tool, or say "all rights reserved") and add `LICENSE` at the root. Your decision, so I haven't added one |
-| R13 | Stop your personal email appearing in public commits | On your Mac: `git config --global user.email <your-id>+RobertsMacros@users.noreply.github.com` (GitHub → Settings → Emails shows the exact address), then tick "Keep my email addresses private" and "Block command line pushes that expose my email". 24 existing commits carry your personal address; removing it means rewriting public history, which breaks every clone and can't recall copies already made. Your call; I haven't touched history |
-| R14 | Delete old branches | GitHub → Branches: `claude/reformat-logline-display-w9uNK` (two commits never merged through a PR; their work was hand-applied in `2e0f59c`), `claude/newsletter-cinema-webapp-0vlt2a`, `claude/whats-on-roadmap-review-02klzo` and `claude/readme-roberts-macros` are all merged or superseded. Check each, then delete |
-| R15 | Settle one highlight bar | The Wait and see bar defaults to Metacritic 75 (`considering.DEFAULT_BAR`) but the star needs 76 (`formatter.is_highlighted`), so a film can "clear your bar" without a star. Tell me which number you want for both |
-| R16 | Decide on Picturehouse branding | The public site and the email hotlink Picturehouse's logo and use its colours. The footers now say "Not affiliated with Picturehouse Cinemas", but the logo can still read as official (and the hotlink broke once, `10d1418`). Keep, or replace with plain text |
+| R1 | Turn on the daily website deploy (the live site is still the 7 Oct upload) | 1. Netlify → User settings → Applications → Personal access tokens → New access token; copy it. 2. Netlify → `clapham-ritzy-cinema` → Project configuration → General → Project details → copy Project ID. 3. GitHub → this repo → Settings → Secrets and variables → Actions → New repository secret: `NETLIFY_AUTH_TOKEN` (the token) and `NETLIFY_SITE_ID` (the ID). 4. Actions → Deploy website → Run workflow on `main`. 5. The run should be green and its last step print `OK: <n> films`. 6. Open the site: "Updated" should show today. While you are in Secrets, delete `NETLIFY_BUILD_HOOK` if it is listed (nothing uses it now) |
+| R2 | Add the TMDB key | Free key at themoviedb.org → Settings → API. GitHub → Settings → Secrets and variables → Actions → New repository secret `TMDB_API_KEY`. The next digest run's report should show `tmdb_key_set: true` |
+| R3 | Let What's On feed the Wait and see list | `considering.json` has been `[]` since 28 Sep. What's On's Populate task (`docs/populate-task.md` step f2 in the whats-on repo) is meant to clone this repo, write the file and push to `main`, but nothing has ever arrived, most likely because the session that runs it can't push here. In the Claude task or environment that runs Populate, add `RobertsMacros/cinema-checking-bot` with push access. If you also do R4, that push to `main` will be refused: either let Populate open a PR instead (a change in whats-on) or give it a bypass in the ruleset |
+| R4 | Protect `main` | GitHub → Settings → Rules → Rulesets → New branch ruleset for `main`: require a pull request, require the three `test` status checks, block force pushes. 23 of the 45 commits on `main` before this work were pushed directly. Mind the Populate push in R3 |
+| R5 | Tidy the old branches | This session's git access can only push its own branch, so I couldn't do this. On GitHub → Branches, delete `claude/newsletter-cinema-webapp-0vlt2a`, `claude/readme-roberts-macros` and `claude/whats-on-roadmap-review-02klzo` (all fully merged). For `claude/reformat-logline-display-w9uNK` (two commits never merged through a PR; their changes reached `main` by hand in `2e0f59c`), first make a tag to keep them: Releases → Draft a new release → Choose a tag → type `archive/reformat-logline-display-w9uNK`, target that branch → Create tag, discard the draft. Then delete the branch (DEC-5) |
+| R6 | Keep your personal email out of future commits | On your Mac: `git config --global user.email <id>+RobertsMacros@users.noreply.github.com` (the exact address is on GitHub → Settings → Emails). On that page tick "Keep my email addresses private" and "Block command line pushes that expose my email". 24 older commits carry your personal address. Removing it needs a history rewrite of a public repo, which breaks clones and can't recall copies, so I recommend leaving them |
+
+## Follow-ups for an agent session (no Robert needed)
+
+| # | What | How |
+|---|---|---|
+| F1 | Check the first scheduled digest on the new code (Tue 17 Nov, 12:17 UTC) | The run should be green, the subject should have no "[CHECK" tag, and `run_check` should print OK. If GitHub starts it late, note the delay against DEC-1 |
+| F2 | Check the first real deploy once R1 is done | Green run, `site_check` OK, Netlify deploy titled "GitHub Actions run …", and how long the build took (review item E16) |
+| F3 | Hide sold-out sessions | Needs a saved Picturehouse page with a sold-out session. Every digest run's artefact holds the pages (`picturehouse-<cinema>.html`); download one from a week with a sold-out showing (this session's network could not reach artefact storage), save the film's block as a fixture, then drop those sessions in `ph_scraper.parse_ph_listings` with a test |
+| F4 | Publish the coordination records | This session could not reach `RobertsMacros/project-coordination-data`. From a session with `gh` access to it, run `python3 .coordination/report.py retry --event <id> --actor f6939167-7453-452d-837c-185ca19555c4` for each event added on 16 Nov in `.coordination/events/` |
+| F5 | Proposal, not started: house UI rules | The web page and email still use a serif font and middle dots (U1). A restyle should start from two or three mock-ups for Robert to choose from |
+
+## Done on 16 Nov from the earlier list
+
+- Review and merge: PR #6, after an independent review and green checks on the final head.
+- Proof on real pages: dry run 43844098986 (no email) read 65 Clapham and 64 Ritzy films, and `run_check` printed "OK: every qualifying Picturehouse film is in the digest".
+- Send time kept at 12:17 UTC (DEC-1). MIT licence added (DEC-2). Logo removed from the public page (DEC-3). Highlight and Wait and see bars kept separate (DEC-4).
 
 ## Definition of done for the website
 
