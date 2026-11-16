@@ -33,7 +33,7 @@
 ### Formatting
 - **Order by score**: films sorted by Metacritic score, highest first; ties and films without a Metacritic score (last) are alphabetical, case-insensitive
 - **Score format**: Metacritic / IMDb / RT% (N/A for missing)
-- **Highlighting**: star films with MC >= 76 or IMDb >= 7.7 (RT is not used)
+- **Highlighting**: star films with MC >= 76 or IMDb >= 7.7 (RT is not used). This is separate from the Wait and see bar (75 by default, per film), see DEC-4 in `DECISIONS.md`
 - **Showtimes grouped by cinema**: "Clapham: Tue 18:10; Thu 20:30 | Ritzy: Fri 19:00"
 - **Booking link**: link to the earliest qualifying screening's booking page (per cinema when a film shows at both). Only links in Picturehouse's current format (`https://web.picturehouses.com/order/showtimes/<cinema>-<session>/seats`) are used; otherwise fall back to the film's Picturehouse page, then the cinema page
 - **Logline trimming**: keep as many whole sentences as fit in ~180 chars, never cut mid-sentence. A single first sentence longer than that is kept whole up to 300 chars; beyond that it is shortened at a word boundary and ends with "…" (never a fake full stop)

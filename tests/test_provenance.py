@@ -51,6 +51,14 @@ class TestWeb:
         webapp._cache.__init__()
         assert webapp.build_payload(force_refresh=True)["sources"] == ["Picturehouse", "Data Thistle"]
 
+    def test_public_page_does_not_carry_the_picturehouse_logo(self):
+        # The page is public and not affiliated with Picturehouse; their logo
+        # (hotlinked from their S3 bucket, which broke once) made it look official
+        from cinema_digest.webapp_template import PAGE_HTML
+
+        assert "s3picturehouses" not in PAGE_HTML
+        assert "<h1>Cinema Listings</h1>" in PAGE_HTML
+
     def test_footer_shows_this_runs_sources_and_credits(self):
         payload = {"films": [], "cinemas": [], "count": 0, "fetched_at": NOW.isoformat(),
                    "fetched_at_label": "Fri 13 Nov, 12:00", "warning": None, "notes": [], "error": None,

@@ -404,3 +404,7 @@ build_static.py       - Builds the static site in public/
 - Support additional cinemas by adding URLs to `config.py`
 - HTML email with nicer formatting (tables, poster thumbnails)
 - Detect and skip "relaxed" or "audio described" duplicates if the user only wants standard screenings
+
+## Licence
+
+MIT (see `LICENSE`). Settled decisions, such as the send time and the licence, are in `DECISIONS.md`.
