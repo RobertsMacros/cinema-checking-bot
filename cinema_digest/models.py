@@ -61,3 +61,5 @@ class ScrapeResult:
     sources: list[str] = field(default_factory=list)
     # Rendered Picturehouse page HTML by cinema, kept for the run report
     pages: dict[str, str] = field(default_factory=dict)
+    # Data Thistle page HTML by cinema, kept for the run report (real fixtures)
+    dt_pages: dict[str, str] = field(default_factory=dict)

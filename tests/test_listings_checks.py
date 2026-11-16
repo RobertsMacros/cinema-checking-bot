@@ -20,6 +20,9 @@ NOW = datetime(2026, 11, 13, 12, 0, tzinfo=LONDON)
 
 
 def _dt_page(n_films: int) -> str:
+    # shortcut: hand-written in the shape of test_scraper.SAMPLE_HTML, because this
+    # session could not fetch Data Thistle. Replace with the saved pages from a run
+    # report (datathistle-<cinema>.html) once one is downloaded (HANDOVER F6).
     times = '<h5>Fri 13 Nov</h5><div><ul><li><a href="https://web.picturehouses.com/order/showtimes/020-1/seats">19:00</a></li></ul></div>'
     return "".join(
         f'<h4><a href="/listing/{i}-f/">DT Film {i}</a></h4><div><ul><li>2026</li></ul></div>{times}'
@@ -82,6 +85,11 @@ class TestFallbackAndLowCountsAreFlagged:
         assert film.year == 2026
         assert result.sources == ["Picturehouse", "Data Thistle"]
 
+    def test_data_thistle_pages_are_kept_for_the_run_report(self):
+        result = scrape_all(_session(_dt_page(20), _dt_page(20)), today=date(2026, 11, 13), ph_fetcher=None)
+        assert set(result.dt_pages) == {"Clapham", "Ritzy"}
+        assert "DT Film 0" in result.dt_pages["Clapham"]
+
     def test_subject_flags(self):
         film = Film(title="A", screenings=[Screening("Ritzy", NOW, "u")])
         assert main_module.subject_flag([], False) == main_module.SUBJECT_FLAG_BROKEN
@@ -143,6 +151,7 @@ def test_main_writes_a_run_report(monkeypatch, tmp_path):
                     scores=Scores())],
         sources=["Picturehouse"],
         pages={"Ritzy": "<html>page</html>"},
+        dt_pages={"Ritzy": "<html>dt</html>"},
     )
     monkeypatch.setattr(sys, "argv", ["cinema_digest", "--dry-run", "--report", str(tmp_path / "report")])
     monkeypatch.setattr(main_module, "setup_logging", lambda verbose=False: None)
@@ -153,6 +162,7 @@ def test_main_writes_a_run_report(monkeypatch, tmp_path):
     report = tmp_path / "report"
     assert (report / "digest.html").exists() and (report / "digest.txt").exists()
     assert (report / "picturehouse-Ritzy.html").read_text() == "<html>page</html>"
+    assert (report / "datathistle-Ritzy.html").read_text() == "<html>dt</html>"
     check = json.loads((report / "listings_check.json").read_text())
     assert check["sources"] == ["Picturehouse"]
     assert "subject" in check

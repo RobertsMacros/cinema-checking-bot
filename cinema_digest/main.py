@@ -131,6 +131,8 @@ def write_report(
     (directory / "digest.html").write_text(html_body, encoding="utf-8")
     for cinema, html in scraped.pages.items():
         (directory / f"picturehouse-{cinema}.html").write_text(html, encoding="utf-8")
+    for cinema, html in scraped.dt_pages.items():
+        (directory / f"datathistle-{cinema}.html").write_text(html, encoding="utf-8")
     check = listings_check(scraped, digest)
     check["subject"] = subject
     check.update(extra or {})

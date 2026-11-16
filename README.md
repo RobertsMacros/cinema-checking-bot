@@ -73,7 +73,8 @@ python -m cinema_digest.run_check run-report/listings_check.json
 ```
 
 `--report DIR` saves the digest (`digest.txt`, `digest.html`), the rendered
-Picturehouse pages it was built from (`picturehouse-<cinema>.html`) and
+Picturehouse and Data Thistle pages it was built from
+(`picturehouse-<cinema>.html`, `datathistle-<cinema>.html`) and
 `listings_check.json`. For each cinema the check lists how many films the
 page showed, which of them have a showing in the digest's windows, and which
 of those are missing from the digest (this should always be empty).

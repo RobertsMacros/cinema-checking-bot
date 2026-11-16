@@ -502,6 +502,7 @@ def scrape_all(
         dt_error: str | None = None
         try:
             html = fetch_page(url, session=s)
+            result.dt_pages[cinema_name] = html
             dt_films = parse_cinema(html, cinema_name, today)
         except requests.RequestException as e:
             logger.error("Could not fetch %s Data Thistle listings: %s", cinema_name, e)
