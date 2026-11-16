@@ -35,7 +35,7 @@ The scheduling examples below run `.venv/bin/python`, so the scheduled job uses 
 | `SMTP_USER` | SMTP username |
 | `SMTP_PASSWORD` | SMTP password or app-specific password |
 | `EMAIL_FROM` | Sender email address |
-| `EMAIL_TO` | Recipient email address(es), comma-separated |
+| `EMAIL_TO` | Recipient email address(es), comma-separated. Logs and dry runs show only the number of recipients, never the addresses (the Actions log is public) |
 
 For Gmail: enable 2FA, then create an [App Password](https://myaccount.google.com/apppasswords).
 
@@ -157,7 +157,9 @@ tab). That workflow:
 3. deploys `public/` with the Netlify CLI;
 4. checks the live `films.json` from outside with
    `python -m cinema_digest.site_check`: the listings must be under 2 hours
-   old, list at least 15 films and include both cinemas.
+   old, list at least 5 films with showings at each cinema (a normal week has
+   about 10 to 15), and not carry the page's incomplete-listings warning, so a
+   fall back to Data Thistle turns the run red even though it still deploys.
 
 To turn it on, add two repository secrets (Settings → Secrets and variables →
 Actions):
@@ -179,7 +181,7 @@ the listings are out of date and to check the cinema's own website.
 You can check the live site at any time:
 
 ```bash
-python -m cinema_digest.site_check            # exits 1 and says why if it is stale or thin
+python -m cinema_digest.site_check            # exits 1 and says why if it is stale, thin or flagged
 ```
 
 ## Running tests

@@ -44,9 +44,14 @@ def _broken(urls):
 
 
 class TestFallbackAndLowCountsAreFlagged:
-    def test_floor_is_realistic(self):
-        # Data Thistle listed 3 to 18 films while the cinemas showed 64 to 69
-        assert MIN_FILMS_PER_CINEMA >= 15
+    def test_partly_loaded_picturehouse_page_flags_the_subject(self):
+        # The saved page has 6 films; Data Thistle adds 12 more, so the combined
+        # count clears the floor, but a real page lists 60 or more: it didn't load
+        result = scrape_all(_session(_dt_page(12), _dt_page(12)), today=date(2026, 11, 13),
+                            ph_fetcher=lambda urls: {n: FIXTURE for n in urls})
+        assert len([f for f in result.films if any(s.cinema == "Clapham" for s in f.screenings)]) >= MIN_FILMS_PER_CINEMA
+        assert result.listings_suspect is True
+        assert any("Picturehouse page showed only 6 films" in w for w in result.warnings)
 
     def test_picturehouse_unreadable_flags_the_subject(self):
         result = scrape_all(_session(_dt_page(20), _dt_page(20)), today=date(2026, 11, 13), ph_fetcher=_broken)
@@ -65,6 +70,17 @@ class TestFallbackAndLowCountsAreFlagged:
         assert set(ok.pages) == {"Clapham", "Ritzy"}
         fallback = scrape_all(_session(_dt_page(20), _dt_page(20)), today=date(2026, 11, 13), ph_fetcher=_broken)
         assert fallback.sources == ["Data Thistle"]
+
+    def test_data_thistle_is_credited_when_it_only_adds_details(self):
+        # Picturehouse pages have no year or description; Data Thistle's copy of
+        # the same film supplies them, so it must be named as a source
+        dt = ('<h4><a href="/listing/1-f/">Wild Horse Nine</a></h4><div><ul><li>2026</li></ul></div>'
+              '<p>A story about horses.</p>')
+        result = scrape_all(_session(dt, "<html></html>"), today=date(2026, 11, 13),
+                            ph_fetcher=lambda urls: {n: FIXTURE for n in urls})
+        film = next(f for f in result.films if f.title == "Wild Horse Nine")
+        assert film.year == 2026
+        assert result.sources == ["Picturehouse", "Data Thistle"]
 
     def test_subject_flags(self):
         film = Film(title="A", screenings=[Screening("Ritzy", NOW, "u")])

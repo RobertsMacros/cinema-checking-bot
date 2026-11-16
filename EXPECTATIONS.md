@@ -57,6 +57,8 @@
 - Day blocks carry the date in a class (`class_2026-11-14`); headings like "TODAY" are ignored
 - Special screenings listed as their own film ("Relaxed: …", "Dog-Friendly - …") fold into the main film as a screening type, even when the special title drops "The"
 - A page that yields no films counts as unreadable: that cinema falls back to Data Thistle and the subject is flagged
+- A page that yields fewer than 15 films (it may not have loaded fully) is still used, with Data Thistle adding to it, but adds a note and flags the subject
+- Data Thistle is named as a source whenever it was read, since it always supplies the year and description the Picturehouse pages lack
 
 ### Scraper: Data Thistle Parsing (backup and extra detail)
 - h4 tags contain film titles as links

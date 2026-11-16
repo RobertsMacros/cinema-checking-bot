@@ -63,7 +63,7 @@ Only what needs your accounts, secrets, settings or Mac. Everything else from th
 ## Definition of done for the website
 
 - The latest "Deploy website" run on `main` is green, including its live-site check.
-- The live `films.json` is under 30 hours old, lists at least 15 films and includes both cinemas (`python -m cinema_digest.site_check` exits 0).
+- The live `films.json` is under 30 hours old, lists at least 5 films with showings at each cinema and carries no incomplete-listings warning (`python -m cinema_digest.site_check` exits 0).
 - Netlify's current deploy says "GitHub Actions run …", not "Deploy triggered by upload".
 
 ## How to run

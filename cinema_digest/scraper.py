@@ -488,6 +488,14 @@ def scrape_all(
                 f"from Data Thistle only, which can miss most of the programme."
             )
             result.listings_suspect = True
+        elif ph_fetcher is not None and len(ph_films) < MIN_FILMS_PER_CINEMA:
+            # Read, but only partly (late blocks still rendering): Data Thistle
+            # can top the count up past the floor, so flag it here
+            result.warnings.append(
+                f"The {cinema_name} Picturehouse page showed only {len(ph_films)} films "
+                f"(a normal week has 60 or more), so it may not have loaded fully."
+            )
+            result.listings_suspect = True
 
         logger.info("Fetching Data Thistle listings for %s from %s", cinema_name, url)
         dt_films: list[Film] = []
@@ -514,7 +522,9 @@ def scrape_all(
                 cinema_name, len(ph_films), extra_films, extra_times,
             )
             used("Picturehouse")
-            if extra_films or extra_times:
+            if dt_films:
+                # Data Thistle always adds something: films or showtimes the page
+                # lacked, or the year and description Picturehouse pages don't carry
                 used("Data Thistle")
         else:
             films = dt_films
