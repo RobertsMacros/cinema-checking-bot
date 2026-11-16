@@ -7,11 +7,11 @@ stays fully self-contained.
 from __future__ import annotations
 
 PAGE_HTML = r"""<!DOCTYPE html>
-<html lang="en">
+<html lang="en-GB">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cinema Listings — Clapham &amp; Ritzy</title>
+<title>Cinema Listings: Clapham &amp; Ritzy</title>
 <script>window.FILMS_URL = window.FILMS_URL || "/api/films"; window.STATIC_SNAPSHOT = false;</script>
 <style>
   :root {
@@ -22,7 +22,8 @@ PAGE_HTML = r"""<!DOCTYPE html>
     --border: #313131;
     --text: #f0f0f0;
     --muted: #9a9a9a;
-    --dim: #6a6a6a;
+    --dim: #8f8f8f;
+    --pink-text: #ff5c87; /* PH pink is 3.9:1 on --bg; this is 5.2:1 or better */
     --serif: Georgia, "Times New Roman", Times, serif;
   }
   * { box-sizing: border-box; }
@@ -144,7 +145,7 @@ PAGE_HTML = r"""<!DOCTYPE html>
     border-radius: 50%; animation: spin 0.9s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .error { color: var(--ph-pink); }
+  .error { color: var(--pink-text); }
   .banner {
     max-width: 900px; margin: 10px auto 0; padding: 10px 14px;
     border: 1px solid #4a2333; background: var(--card-hl); border-radius: 10px;
@@ -156,25 +157,27 @@ PAGE_HTML = r"""<!DOCTYPE html>
   .wrap-banner { padding: 0 16px; }
   .badge {
     display: inline-block; font-size: 11px; font-weight: normal; vertical-align: middle;
-    border: 1px solid var(--ph-pink); color: var(--ph-pink);
+    border: 1px solid var(--ph-pink); color: var(--pink-text);
     border-radius: 999px; padding: 1px 8px; margin-left: 6px;
   }
 
   footer { text-align: center; color: var(--dim); font-size: 11px; padding: 24px 16px 40px; }
-  footer a { color: var(--ph-pink); text-decoration: none; }
+  footer a { color: var(--pink-text); text-decoration: underline; }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 </style>
 </head>
 <body>
   <header>
     <img src="https://s3picturehouses.s3.eu-central-1.amazonaws.com/settings/ph1551963779.png" alt="Picturehouse">
-    <h1>— Cinema Listings —</h1>
+    <h1>Cinema Listings</h1>
     <div class="sub">Evening &amp; weekend showtimes · next 7 days · Clapham &amp; Ritzy</div>
   </header>
 
   <div class="toolbar">
     <div class="toolbar-inner">
-      <div class="pills" id="pills"></div>
+      <div class="pills" id="pills" role="group" aria-label="Cinema"></div>
       <div class="controls">
+        <label for="search" class="visually-hidden">Search films</label>
         <input type="search" id="search" placeholder="Search title, director…" autocomplete="off">
         <label class="toggle"><input type="checkbox" id="hlOnly"> Highlights only ⭐</label>
         <button class="btn" id="refresh">↻ Refresh</button>
@@ -249,24 +252,30 @@ function buildPills() {
   const pills = ["All", ...cinemas];
   $("pills").innerHTML = pills.map((name) => {
     const val = name === "All" ? "" : name;
-    const active = (state.cinema || "") === val ? " active" : "";
-    return `<button class="pill${active}" data-cinema="${esc(val)}">${esc(name)}</button>`;
+    const on = (state.cinema || "") === val;
+    return `<button class="pill${on ? " active" : ""}" aria-pressed="${on}" data-cinema="${esc(val)}">${esc(name)}</button>`;
   }).join("");
   $("pills").querySelectorAll(".pill").forEach((p) => {
     p.addEventListener("click", () => {
       state.cinema = p.dataset.cinema || null;
       buildPills();
+      // The buttons were rebuilt: keep keyboard focus on the one just chosen
+      $("pills").querySelector(`[data-cinema="${CSS.escape(p.dataset.cinema)}"]`).focus();
       render();
     });
   });
 }
 
+// Spoken and shown names for the score icons
+const SCORE_NAMES = { metacritic: "Metacritic", imdb: "IMDb", rotten_tomatoes: "Rotten Tomatoes" };
+
 function scoreEl(kind, value, url, suffix) {
+  const icon = `<img src="${ICONS[kind]}" alt="${SCORE_NAMES[kind]}" width="14" height="14">`;
   if (value == null) {
-    return `<span class="score na"><img src="${ICONS[kind]}" alt="">–</span>`;
+    return `<span class="score na">${icon}N/A</span>`;
   }
   const label = esc(value) + (suffix || "");
-  const inner = `<img src="${ICONS[kind]}" alt="">${label}`;
+  const inner = `${icon}${label}`;
   return url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${inner}</a>`
              : `<span class="score">${inner}</span>`;
 }
@@ -317,7 +326,7 @@ function cardHtml(film) {
     ? '<span class="na" title="Score lookup ran out of time for this film">scores incomplete</span>'
     : "");
   return `<div class="card${film.highlighted ? " hl" : ""}">
-    <div class="title">${esc(film.title)}${film.highlighted ? '<span class="star">⭐</span>' : ""}${film.considering ? '<span class="badge">Wait and see</span>' : ""}</div>
+    <div class="title">${esc(film.title)}${film.highlighted ? '<span class="star" role="img" aria-label="Highlight: Metacritic 76 or more, or IMDb 7.7 or more">⭐</span>' : ""}${film.considering ? '<span class="badge">Wait and see</span>' : ""}</div>
     ${meta ? `<div class="metaline">${meta}</div>` : ""}
     ${film.logline ? `<div class="logline">${esc(film.logline)}</div>` : ""}
     <div class="showtimes">${showtimesHtml(film)}</div>

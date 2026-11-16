@@ -103,6 +103,10 @@ Then open <http://127.0.0.1:5000>. The page lets you:
 - Toggle **Highlights only** (Metacritic ≥ 76 or IMDb ≥ 7.7).
 - **Refresh** to force a fresh scrape.
 
+The page is built to WCAG AA: labelled controls, named score icons, a cinema
+filter that reports which cinema is selected, and text contrast of at least
+4.5:1 (`tests/test_accessibility.py` checks this in a real browser).
+
 It reuses the exact scrape → filter → enrich pipeline that powers the email,
 and caches results in memory (default 30 min, set `CACHE_TTL_SECONDS`) so
 repeat visits are instant. The same `OMDB_API_KEY` / `TMDB_API_KEY` env vars
@@ -357,7 +361,7 @@ Notes:
 Each film appears as one line:
 
 ```
-- **Film Title — dir. Director** - logline - 83 / 7.4 / 91% - Clapham: Tue 18:10; Thu 20:30 | Ritzy: Fri 19:00 - [Book](https://web.picturehouses.com/order/showtimes/020-12345/seats)
+- **Film Title (dir. Director)** - logline - 83 / 7.4 / 91% - Clapham: Tue 18:10; Thu 20:30 | Ritzy: Fri 19:00 - [Book](https://web.picturehouses.com/order/showtimes/020-12345/seats)
 ```
 
 Score order: Metacritic / IMDb / Rotten Tomatoes. N/A for unavailable scores; "(scores not fetched (time limit))" if the run's time budget ran out before that film's lookups finished. Films are ordered by Metacritic score, highest first; films without a Metacritic score come last, alphabetically.

@@ -25,6 +25,7 @@ Pipeline: `scraper.scrape_all()` (Picturehouse pages through headless Chromium, 
 | Incomplete listings | Fewer than 15 films at a cinema, or a fall back to Data Thistle, flags the subject "[CHECK: listings incomplete]" (it used to be a body note only, with a floor of 3) |
 | Digest send time | Scheduled for Tuesday 12:17 UTC (was 17:00 UTC, which GitHub started at 20:10 to 22:07 UTC in Oct and Nov, after the evening's screenings began). See R5 to change it |
 | Provenance | Email, plain text and web footers name the sources actually used, credit OMDb and TMDB (TMDB's required notice) and say "Not affiliated with Picturehouse Cinemas." They used to say "Listings from Data Thistle" even after the switch |
+| Accessibility | Text contrast now 5.2:1 or better on the page (was 3.1 to 3.9:1) and in the email; labelled search box; score icons named; cinema filter reports which is selected and keeps keyboard focus; `lang="en-GB"`; em dashes gone from headings |
 | Proof per digest run | Each run uploads a report (digest, Picturehouse pages, `listings_check.json`) and `run_check` turns the run red if a film on the pages is missing from the digest |
 | Tests | Run on every push (including `claude/**` branches), on PRs and weekly; browser tests of the page run in CI |
 

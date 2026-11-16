@@ -47,6 +47,7 @@
 - **Multipart**: sends both plain text and HTML versions
 - **Dry run mode**: print to stdout + write HTML preview to `digest_preview.html`
 - **Branded HTML**: Picturehouse brand colours, dark theme, responsive layout
+- **Accessible**: `lang="en-GB"`; all text at least 4.5:1 contrast on its background (Picturehouse pink is used for fills and borders; pink text uses a lighter shade); no em dashes in headings or copy. On the web page the search box has a label, the cinema filter is a named group whose buttons report `aria-pressed`, keyboard focus stays on the chosen button, and the highlight star has a spoken label
 - **Provenance and credits**: the footer (email, plain text and web page) names the listing sources actually used this run (Picturehouse Cinemas, Data Thistle or both), credits the score sources, carries TMDB's required notice ("This product uses the TMDB API but is not endorsed or certified by TMDB") and says "Not affiliated with Picturehouse Cinemas."
 
 ## Per-Feature Expectations
@@ -89,7 +90,7 @@
 - Warning banner and notes above the film list when there are problems
 - All scraped text (titles, loglines, directors, notes) is HTML-escaped
 - Picturehouse logo from S3
-- Score source icons from Google favicon API
+- Score source icons from Google favicon API; next to a score each icon has alt text naming its source (Metacritic, IMDb, Rotten Tomatoes), and a missing score reads "N/A"
 - Film rows with star highlight for high-scored films
 - Director, year, duration metadata line
 - Compact inline showtimes
