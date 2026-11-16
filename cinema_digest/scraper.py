@@ -470,22 +470,39 @@ def scrape_all(
         except Exception:
             logger.exception("Unexpected error reading the Picturehouse pages")
 
+    result.pages = dict(ph_pages)
+
+    def used(source: str) -> None:
+        if source not in result.sources:
+            result.sources.append(source)
+
     for cinema_name, url in CINEMAS.items():
         ph_films: list[Film] = []
         if cinema_name in ph_pages:
             ph_films = parse_ph_listings(ph_pages[cinema_name], cinema_name)
-        if ph_fetcher is not None and len(ph_films) < MIN_FILMS_PER_CINEMA:
+        if ph_fetcher is not None and not ph_films:
+            # Data Thistle alone has missed most of the programme before, so
+            # this flags the subject, not just a note in the body.
             result.warnings.append(
                 f"The {cinema_name} Picturehouse page could not be read, so its films come "
-                f"from Data Thistle only, which can miss some films and events."
+                f"from Data Thistle only, which can miss most of the programme."
             )
-            ph_films = []
+            result.listings_suspect = True
+        elif ph_fetcher is not None and len(ph_films) < MIN_FILMS_PER_CINEMA:
+            # Read, but only partly (late blocks still rendering): Data Thistle
+            # can top the count up past the floor, so flag it here
+            result.warnings.append(
+                f"The {cinema_name} Picturehouse page showed only {len(ph_films)} films "
+                f"(a normal week has 60 or more), so it may not have loaded fully."
+            )
+            result.listings_suspect = True
 
         logger.info("Fetching Data Thistle listings for %s from %s", cinema_name, url)
         dt_films: list[Film] = []
         dt_error: str | None = None
         try:
             html = fetch_page(url, session=s)
+            result.dt_pages[cinema_name] = html
             dt_films = parse_cinema(html, cinema_name, today)
         except requests.RequestException as e:
             logger.error("Could not fetch %s Data Thistle listings: %s", cinema_name, e)
@@ -505,17 +522,25 @@ def scrape_all(
                 "%s: %d films from Picturehouse, plus %d film(s) and %d showtime(s) only on Data Thistle",
                 cinema_name, len(ph_films), extra_films, extra_times,
             )
+            used("Picturehouse")
+            if dt_films:
+                # Data Thistle always adds something: films or showtimes the page
+                # lacked, or the year and description Picturehouse pages don't carry
+                used("Data Thistle")
         else:
             films = dt_films
+            if dt_films:
+                used("Data Thistle")
 
         screening_count = sum(len(f.screenings) for f in films)
 
         if len(films) < MIN_FILMS_PER_CINEMA:
             logger.warning("Only %d films found for %s", len(films), cinema_name)
             result.warnings.append(
-                f"Only {len(films)} film(s) found for {cinema_name}, which is unusually low. "
-                f"The listings page may have changed."
+                f"Only {len(films)} film(s) found for {cinema_name}, which is unusually low "
+                f"(a normal week has 60 or more). The listings are probably incomplete."
             )
+            result.listings_suspect = True
         if films and screening_count == 0:
             logger.warning("%d films but no showtimes parsed for %s", len(films), cinema_name)
             result.warnings.append(

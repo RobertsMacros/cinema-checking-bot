@@ -37,6 +37,7 @@ def load(raw: str | None = None) -> list[dict]:
         if not raw.strip() and FILE.exists():
             raw = FILE.read_text(encoding="utf-8")
     if not raw.strip():
+        logger.info("Wait and see list is empty or missing; no films flagged")
         return []
     try:
         data = json.loads(raw)
@@ -45,7 +46,14 @@ def load(raw: str | None = None) -> list[dict]:
         return []
     if not isinstance(data, list):
         return []
-    return [d for d in data if isinstance(d, dict) and isinstance(d.get("title"), str) and d["title"].strip()]
+    entries = [d for d in data if isinstance(d, dict) and isinstance(d.get("title"), str) and d["title"].strip()]
+    if entries:
+        logger.info("Wait and see list: %d film(s)", len(entries))
+    else:
+        # considering.json has been [] since it was added on 28 Sep 2026: What's
+        # On's Populate run has never written to it. Say so in every run log.
+        logger.info("Wait and see list is empty (nothing from What's On's Populate run); no films flagged")
+    return entries
 
 
 def _year(v) -> int | None:

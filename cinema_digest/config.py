@@ -27,9 +27,11 @@ CINEMA_CODES = {
 
 PH_WHATS_ON_URL = "https://www.picturehouses.com/whats-on"
 
-# Minimum number of films we expect per cinema. If we find fewer, something
-# is likely wrong with the scraper or the page structure has changed.
-MIN_FILMS_PER_CINEMA = 3
+# Minimum number of films we expect per cinema. Each Picturehouse page lists
+# 60 to 70 films (measured Oct and Nov 2026), while Data Thistle alone listed
+# 3 to 18 and nobody noticed for weeks. Fewer than this flags the email
+# subject: the listings are probably incomplete.
+MIN_FILMS_PER_CINEMA = 15
 
 # Whole-run time budget. Score lookups stop when it is used up (minus a reserve
 # for formatting and sending) so the digest always goes out. Keep this well

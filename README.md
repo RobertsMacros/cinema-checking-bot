@@ -6,11 +6,11 @@ Automatically fetches upcoming film listings from Clapham Picturehouse and Ritzy
 
 ## What it does
 
-1. Scrapes film listings from [Data Thistle](https://film.datathistle.com/) for both cinemas
+1. Reads each cinema's own [Picturehouse](https://www.picturehouses.com/) page in headless Chromium (the showtimes only appear once the page's script has run), then adds anything extra from [Data Thistle](https://film.datathistle.com/), which is also the backup if a Picturehouse page can't be read
 2. Filters showtimes to evenings (weekdays 18:00-21:30, weekends 11:00-21:30)
 3. Enriches each film with Metacritic, IMDb, and Rotten Tomatoes scores via [OMDb API](https://www.omdbapi.com/)
 4. Formats a digest ordered by Metacritic score (highest first; unscored films last, alphabetically)
-5. Emails the result (or prints it in dry-run mode). A digest is always sent: if the listings look broken, it says so at the top and the subject line is flagged
+5. Emails the result (or prints it in dry-run mode). A digest is always sent: if the listings look broken or incomplete, it says so at the top and the subject line is flagged. That includes a cinema with fewer than 15 films (a normal week has 60 or more) and a fall back to Data Thistle because a Picturehouse page couldn't be read
 
 ## Setup
 
@@ -29,19 +29,21 @@ The scheduling examples below run `.venv/bin/python`, so the scheduled job uses 
 | Variable | Description |
 |----------|-------------|
 | `OMDB_API_KEY` | Free API key from [omdbapi.com](https://www.omdbapi.com/apikey.aspx) (1000 requests/day) |
-| `TMDB_API_KEY` | Free API key from [themoviedb.org](https://www.themoviedb.org/settings/api) (fallback for score lookups) |
+| `TMDB_API_KEY` | Free API key from [themoviedb.org](https://www.themoviedb.org/settings/api) (fallback for score lookups; without it the log warns and the run report shows `tmdb_key_set: false`) |
 | `SMTP_HOST` | SMTP server (default: `smtp.gmail.com`) |
 | `SMTP_PORT` | SMTP port (default: `587`). `465` uses implicit TLS; any other port uses STARTTLS. If the configured port fails before the message is sent, the other method is tried once (465 or 587). |
 | `SMTP_USER` | SMTP username |
 | `SMTP_PASSWORD` | SMTP password or app-specific password |
 | `EMAIL_FROM` | Sender email address |
-| `EMAIL_TO` | Recipient email address(es), comma-separated |
+| `EMAIL_TO` | Recipient email address(es), comma-separated. Logs and dry runs show only the number of recipients, never the addresses (the Actions log is public) |
 
 For Gmail: enable 2FA, then create an [App Password](https://myaccount.google.com/apppasswords).
 
 ## Films you are considering
 
 `considering.json` at the repository root lists films parked on What's On's Wait and see list (titles and years only, since this repository is public). What's On's Populate run keeps it up to date. Matching films are listed first in the digest with a pink flag saying whether their Metacritic score has cleared your bar (75 unless the entry says otherwise). Set `CONSIDERING` in the environment to the same JSON to try a list locally.
+
+As of November 2026 the file has been `[]` since it was added on 28 September: nothing from What's On has reached it yet, so no film has ever been flagged. Every run now logs the list's size, and the run report records `wait_and_see_entries` and `wait_and_see_matched`, so you can see whether it is being fed.
 
 ## Usage
 
@@ -63,6 +65,27 @@ python -m cinema_digest.main
 python -m cinema_digest.main --dry-run -v
 ```
 
+### Run report: check the output, not just the exit code
+
+```bash
+python -m cinema_digest.main --dry-run --report run-report
+python -m cinema_digest.run_check run-report/listings_check.json
+```
+
+`--report DIR` saves the digest (`digest.txt`, `digest.html`), the rendered
+Picturehouse and Data Thistle pages it was built from
+(`picturehouse-<cinema>.html`, `datathistle-<cinema>.html`) and
+`listings_check.json`. For each cinema the check lists how many films the
+page showed, which of them have a showing in the digest's windows, and which
+of those are missing from the digest (this should always be empty).
+`run_check` exits 1 and says why if anything is missing, if the listings did
+not come from Picturehouse, or if the digest was flagged as incomplete.
+
+The GitHub Actions digest does both on every run: the report is uploaded as
+the run's artefact (`digest-run-<n>`, kept 30 days) and a problem turns the
+run red after the email has gone. To check without sending an email, run
+"Cinema Digest" from the Actions tab with **Dry run** ticked.
+
 ## Interactive web app
 
 As well as the scheduled email, the same listings are available as a live,
@@ -75,11 +98,15 @@ python -m cinema_digest.webapp
 
 Then open <http://127.0.0.1:5000>. The page lets you:
 
-- **Filter by cinema** (All / Clapham / Ritzy) — a film's showtimes and booking
+- **Filter by cinema** (All / Clapham / Ritzy): a film's showtimes and booking
   buttons narrow to just the selected cinema.
 - **Search** by title, director, or logline.
 - Toggle **Highlights only** (Metacritic ≥ 76 or IMDb ≥ 7.7).
 - **Refresh** to force a fresh scrape.
+
+The page is built to WCAG AA: labelled controls, named score icons, a cinema
+filter that reports which cinema is selected, and text contrast of at least
+4.5:1 (`tests/test_accessibility.py` checks this in a real browser).
 
 It reuses the exact scrape → filter → enrich pipeline that powers the email,
 and caches results in memory (default 30 min, set `CACHE_TTL_SECONDS`) so
@@ -116,18 +143,47 @@ mid-refresh, and the cache never fills.
 
 ### Netlify (static snapshot)
 
-`netlify.toml` builds a static copy with `build_static.py`. The listings are
-collected at build time, so the site needs rebuilding to stay current; the
-page hides showtimes that have already started and has no Refresh button.
+The hosted site (<https://clapham-ritzy-cinema.netlify.app>) is a static copy
+made by `build_static.py`. The listings are collected at build time, so the
+site is rebuilt and redeployed every day by
+`.github/workflows/deploy_site.yml` (04:43 UTC, or by hand from the Actions
+tab). That workflow:
 
-`.github/workflows/netlify_rebuild.yml` rebuilds it daily. To turn it on:
+1. fails straight away if the secrets `NETLIFY_AUTH_TOKEN` or
+   `NETLIFY_SITE_ID` are missing, so a site that isn't being updated shows up
+   as a red run, not a green one;
+2. installs headless Chromium and runs `build_static.py` (the build itself
+   fails if no films were collected, so a broken scrape never replaces a
+   working site);
+3. deploys `public/` with the Netlify CLI;
+4. checks the live `films.json` from outside with
+   `python -m cinema_digest.site_check`: the listings must be under 2 hours
+   old, list at least 5 films with showings at each cinema (a normal week has
+   about 10 to 15), and not carry the page's incomplete-listings warning, so a
+   fall back to Data Thistle turns the run red even though it still deploys.
 
-1. Link the Netlify project to this repo (Project configuration → Build &
-   deploy → Link repository). Build hooks only work for linked projects.
-2. Create a build hook (Project configuration → Build & deploy → Build hooks).
-3. Add its URL as the repo secret `NETLIFY_BUILD_HOOK`.
+To turn it on, add two repository secrets (Settings → Secrets and variables →
+Actions):
 
-Until the secret exists the workflow logs a warning and does nothing.
+- `NETLIFY_AUTH_TOKEN`: a Netlify personal access token (Netlify → User
+  settings → Applications → Personal access tokens → New access token).
+- `NETLIFY_SITE_ID`: the project's ID (Netlify → the
+  `clapham-ritzy-cinema` project → Project configuration → General →
+  Project details → Project ID).
+
+Then run "Deploy website" once from the Actions tab and check it goes green.
+Don't also link the repo for Netlify-side builds: Netlify's build image can't
+install Chromium's system libraries (see `netlify.toml`).
+
+On the page, showtimes that have already started are hidden and there is no
+Refresh button. If a snapshot is more than 36 hours old, a yellow banner says
+the listings are out of date and to check the cinema's own website.
+
+You can check the live site at any time:
+
+```bash
+python -m cinema_digest.site_check            # exits 1 and says why if it is stale, thin or flagged
+```
 
 ## Running tests
 
@@ -136,7 +192,9 @@ Until the secret exists the workflow logs a warning and does nothing.
 .venv/bin/python -m pytest tests/ -v
 ```
 
-Unit tests run offline (any network access fails the test). The live tests against Data Thistle are skipped unless you ask for them:
+Unit tests run offline (any network access fails the test). Tests of the web page render it in headless Chromium with its data inlined and the clock frozen; they need `python -m playwright install chromium` once, and are skipped if Chromium can't start (CI sets `REQUIRE_BROWSER_TESTS=1`, so there they fail instead). If Playwright's own browser download is missing, point `PLAYWRIGHT_CHROMIUM_EXECUTABLE` at a Chromium binary. CI runs the suite on every push, on pull requests and every Monday morning.
+
+The live tests against Data Thistle are skipped unless you ask for them:
 
 ```bash
 .venv/bin/python -m pytest -m integration      # or: RUN_INTEGRATION=1 pytest tests/
@@ -146,7 +204,7 @@ Unit tests run offline (any network access fails the test). The live tests again
 
 The script is designed to run unattended on a schedule. It does not need a web server or the computer to be logged in -- it just needs the machine to be powered on and connected to the internet.
 
-All the examples run weekly on Tuesday at 18:00 London time, matching the GitHub Actions schedule (Option 6). Replace `/path/to/cinema-checking-bot` with the real path.
+All the examples run weekly on Tuesday at 18:00 London time. A local scheduler starts on time, so 18:00 still catches that evening's showings; GitHub Actions does not (see Option 6). Replace `/path/to/cinema-checking-bot` with the real path.
 
 ### Option 1: cron (Linux / macOS)
 
@@ -168,8 +226,8 @@ cron runs whether or not you are logged in, as long as the machine is on.
 
 launchd reads jobs from two places:
 
-- `/Library/LaunchDaemons/` — system jobs; they run at boot whether or not anyone is logged in. The plist must be owned by `root:wheel` with mode `644`. Use the `UserName` key so the job runs as you, not root.
-- `~/Library/LaunchAgents/` — per-user jobs; they run only while you are logged in. Leave out `UserName`.
+- `/Library/LaunchDaemons/`: system jobs; they run at boot whether or not anyone is logged in. The plist must be owned by `root:wheel` with mode `644`. Use the `UserName` key so the job runs as you, not root.
+- `~/Library/LaunchAgents/`: per-user jobs; they run only while you are logged in. Leave out `UserName`.
 
 (`~/Library/LaunchDaemons/` is not a location launchd reads, so a plist there never runs after a reboot.)
 
@@ -293,11 +351,11 @@ If your local machine is not always on, run this on a cheap Linux VM (e.g. a fre
 
 ### Option 6: GitHub Actions
 
-If this repo is pushed to GitHub, the included workflow at `.github/workflows/cinema_digest.yml` runs **weekly on Tuesday at 17:00 UTC** (18:00 BST in summer, 17:00 GMT in winter). It can also be run by hand from the Actions tab. Add your secrets in the repo's Settings > Secrets and variables > Actions; secrets you leave undefined (e.g. `SMTP_PORT`) fall back to the defaults above.
+If this repo is pushed to GitHub, the included workflow at `.github/workflows/cinema_digest.yml` is scheduled **weekly on Tuesday at 12:17 UTC** (12:17 GMT in winter, 13:17 BST in summer). GitHub starts scheduled runs late, and on-the-hour schedules most: the old 17:00 UTC schedule started between 20:10 and 22:07 UTC in October and November 2026, by which time Tuesday's evening screenings had begun and were left out. Starting at 12:17 means even the worst delay seen (5 hours 7 minutes) arrives by 17:24. It can also be run by hand from the Actions tab. Add your secrets in the repo's Settings > Secrets and variables > Actions; secrets you leave undefined (e.g. `SMTP_PORT`) fall back to the defaults above.
 
 Notes:
 
-- GitHub often starts scheduled runs late, sometimes by an hour or more.
+- GitHub often starts scheduled runs late, by up to 5 hours in late 2026 (hence 12:17).
 - GitHub disables scheduled workflows in public repos after 60 days without repository activity. The workflow's last step re-enables itself through the API (using the built-in token, no commits) to prevent that. If the schedule has been disabled anyway, re-enable it from the Actions tab.
 - The run has an 8-minute time budget and always sends; score lookups that don't finish in time are marked in the digest. The job timeout (15 minutes) is only a backstop.
 
@@ -306,7 +364,7 @@ Notes:
 Each film appears as one line:
 
 ```
-- **Film Title — dir. Director** - logline - 83 / 7.4 / 91% - Clapham: Tue 18:10; Thu 20:30 | Ritzy: Fri 19:00 - [Book](https://web.picturehouses.com/order/showtimes/020-12345/seats)
+- **Film Title (dir. Director)** - logline - 83 / 7.4 / 91% - Clapham: Tue 18:10; Thu 20:30 | Ritzy: Fri 19:00 - [Book](https://web.picturehouses.com/order/showtimes/020-12345/seats)
 ```
 
 Score order: Metacritic / IMDb / Rotten Tomatoes. N/A for unavailable scores; "(scores not fetched (time limit))" if the run's time budget ran out before that film's lookups finished. Films are ordered by Metacritic score, highest first; films without a Metacritic score come last, alphabetically.
@@ -317,22 +375,30 @@ The Book link goes to the booking page for the film's earliest qualifying screen
 
 ```
 cinema_digest/
-  config.py      - Environment variable loading
-  models.py      - Film, Screening, Scores dataclasses
-  scraper.py     - Data Thistle HTML parsing
-  filters.py     - Showtime filtering (time windows, date range)
-  enrich.py      - OMDb API score enrichment with caching
-  formatter.py   - Markdown digest formatting
-  emailer.py     - SMTP email sending
-  main.py        - Orchestration entry point
+  config.py           - Environment variable loading, cinemas, thresholds
+  models.py           - Film, Screening, Scores, ScrapeResult dataclasses
+  ph_scraper.py       - Picturehouse cinema pages (headless Chromium) and parsing
+  scraper.py          - Data Thistle parsing; combines both sources (scrape_all)
+  filters.py          - Showtime filtering (time windows, date range)
+  considering.py      - What's On's Wait and see list (considering.json)
+  enrich.py           - Score enrichment (OMDb, TMDB, IMDb, Metacritic, RT) with caching
+  formatter.py        - Plain-text and HTML digest formatting
+  emailer.py          - SMTP email sending
+  main.py             - Orchestration entry point; --report run report
+  run_check.py        - Fails a run whose digest doesn't match the Picturehouse pages
+  webapp.py           - Flask app and the payload behind the web page
+  webapp_template.py  - The single-page web UI
+  site_check.py       - Checks the live site is fresh and complete
+build_static.py       - Builds the static site in public/
 ```
 
 ## Limitations
 
-- Data Thistle is a third-party scraping source. If they change their HTML structure, the scraper will need updating. The digest is still sent, with a warning at the top and a flagged subject, when a listings page can't be fetched, when films are found but no showtimes can be read, or when nothing qualifies for the next 7 days. An unusually low film count (fewer than 3 at a cinema) is noted in the digest.
-- OMDb free tier is limited to 1000 API calls/day (more than enough for ~25 films).
-- OMDb does not always have scores for new or niche releases. These show as N/A.
-- The script does not detect sold-out or struck-through sessions (Data Thistle does not reliably expose this).
+- Both listings sources are scraped web pages. If Picturehouse or Data Thistle change their markup, the parsers need updating. The digest is still sent, with a warning at the top and a flagged subject, when a listings page can't be fetched or read, when films are found but no showtimes can be read, when a cinema has fewer than 15 films, or when nothing qualifies for the next 7 days.
+- OMDb free tier is limited to 1000 API calls/day (enough for a normal week's 20 to 40 qualifying films).
+- OMDb does not always have scores for new or niche releases, or for stage recordings. These show as N/A. Event wrappers such as "MUBI FEST LIVE:" or "+ Q&A" are removed before looking a film up.
+- Sold-out sessions are still listed: the Picturehouse page markup for a sold-out session hasn't been captured yet (see HANDOVER).
+- The email and page credit their sources and say they are not affiliated with Picturehouse Cinemas.
 
 ## Possible improvements
 
@@ -341,3 +407,7 @@ cinema_digest/
 - Support additional cinemas by adding URLs to `config.py`
 - HTML email with nicer formatting (tables, poster thumbnails)
 - Detect and skip "relaxed" or "audio described" duplicates if the user only wants standard screenings
+
+## Licence
+
+MIT (see `LICENSE`). Settled decisions, such as the send time and the licence, are in `DECISIONS.md`.

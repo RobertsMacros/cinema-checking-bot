@@ -92,9 +92,29 @@ def _write_cache(key: str, data: dict | None) -> None:
         logger.warning("Could not write cache file: %s", key)
 
 
+# Picturehouse series and event labels put in front of a film's title, e.g.
+# "MUBI FEST LIVE: A LONG WINTER" or "Parent & Baby Screening: Wicked". Only
+# these known labels are removed: real titles often contain a colon.
+_EVENT_PREFIX = re.compile(
+    r"^(?:mubi fest live|(?:exclusive\s+)?preview|parent\s*&\s*baby(?:\s+screening)?|toddler time|"
+    r"kids'?\s+club|silver screen|members'?\s+screening|bar trash|culture shock|discover tuesdays|"
+    r"throwback)\s*:\s*",
+    re.IGNORECASE,
+)
+# Extras added after the title: "+ Q&A", "+ Intro", "+ Recorded Q&A with ..."
+# ("Romeo + Juliet" is left alone: only these event words count).
+_EVENT_SUFFIX = re.compile(
+    r"\s*\+\s*(?:live\s+|recorded\s+|satellite\s+|director\s+)?"
+    r"(?:q\s*&\s*a|intro(?:duction)?|panel|discussion|talk)\b.*$",
+    re.IGNORECASE,
+)
+
+
 def _clean_title_for_search(title: str) -> str:
-    """Strip noise from a title before querying OMDb."""
+    """Strip noise from a title before querying OMDb and the other score sites."""
     t = title.strip()
+    t = _EVENT_PREFIX.sub("", t)
+    t = _EVENT_SUFFIX.sub("", t)
     # Remove trailing year in parens: "Film Name (2026)" -> "Film Name"
     t = re.sub(r"\s*\(\d{4}\)\s*$", "", t)
     # Remove trailing exclamation marks that some listings add
@@ -890,14 +910,22 @@ def _build_ph_url(ho_code: str, slug: str, cinema: str) -> str:
 
 
 def _enrich_ph_links(films: list[Film], session: requests.Session) -> None:
-    """Set ph_url on each film by matching against PH website."""
+    """Set ph_url on films that have none by matching titles on the PH website.
+
+    Films read from a cinema's Picturehouse page already carry their own
+    link; that link is kept (title matching here is only a guess), and the
+    what's-on page is not fetched at all when every film has one.
+    """
+    missing = [f for f in films if not f.ph_url]
+    if not missing:
+        return
     try:
         codes = _fetch_ph_film_codes(session)
     except Exception:
         logger.exception("Failed to fetch PH film codes")
         return
 
-    for film in films:
+    for film in missing:
         norm = normalize_title(film.title)
         match = codes.get(norm)
         if match:
@@ -1053,6 +1081,8 @@ def enrich_films(
 
     if not api_key:
         logger.warning("No OMDb API key configured; OMDb scores will be N/A")
+    if not tmdb_api_key:
+        logger.warning("No TMDB API key configured; the TMDB fallback for score lookups is off")
 
     if session is not None or max_workers <= 1:
         s = session or _make_session()

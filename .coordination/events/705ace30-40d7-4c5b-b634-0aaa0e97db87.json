@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "event_id": "705ace30-40d7-4c5b-b634-0aaa0e97db87",
+  "task_id": "check:19",
+  "repository": "RobertsMacros/cinema-checking-bot",
+  "actor_id": "f6939167-7453-452d-837c-185ca19555c4",
+  "parent_event_ids": ["5b55ff15-8c45-4cd6-9b4a-dcb63d1b1a5d"],
+  "status": "done",
+  "title": "Check: Approve extension page access and read-only Mail access.",
+  "scope": "Check whether Robert still needs to do this: Approve extension page access and read-only Mail access. Inspect this repository's code, docs and history; do not change code for this request.",
+  "roadmap_id": null,
+  "milestone_ids": [],
+  "occurred_at": "2026-11-16T07:49:28Z",
+  "summary": "No longer needed for this repository: Picturehouse pages are read by headless Chromium in CI and nothing reads mail. Recorded locally on the fix branch; the shared claim and event were not published (this session cannot reach the coordination data repository).",
+  "evidence": [
+    {"kind": "commit", "ref": "105f80043803b8737eabdcb1a5e1f0ca44c6abb0", "result": "Picturehouse pages read by headless Chromium, no extension involved"},
+    {"kind": "test", "ref": ".coordination/reports/6b08943f-b944-411c-af3d-a2ab64ec87ea.json", "result": "Source check of the whole repository and its history"}
+  ],
+  "remaining": [],
+  "blockers": []
+}

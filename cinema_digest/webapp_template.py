@@ -7,11 +7,11 @@ stays fully self-contained.
 from __future__ import annotations
 
 PAGE_HTML = r"""<!DOCTYPE html>
-<html lang="en">
+<html lang="en-GB">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cinema Listings — Clapham &amp; Ritzy</title>
+<title>Cinema Listings: Clapham &amp; Ritzy</title>
 <script>window.FILMS_URL = window.FILMS_URL || "/api/films"; window.STATIC_SNAPSHOT = false;</script>
 <style>
   :root {
@@ -22,7 +22,8 @@ PAGE_HTML = r"""<!DOCTYPE html>
     --border: #313131;
     --text: #f0f0f0;
     --muted: #9a9a9a;
-    --dim: #6a6a6a;
+    --dim: #8f8f8f;
+    --pink-text: #ff5c87; /* PH pink is 3.9:1 on --bg; this is 5.2:1 or better */
     --serif: Georgia, "Times New Roman", Times, serif;
   }
   * { box-sizing: border-box; }
@@ -40,7 +41,6 @@ PAGE_HTML = r"""<!DOCTYPE html>
     text-align: center;
     padding: 26px 16px 14px;
   }
-  header img { width: 150px; height: auto; display: block; margin: 0 auto 10px; }
   header h1 {
     font-size: 22px; font-weight: bold; margin: 0; letter-spacing: 0.5px;
   }
@@ -144,35 +144,38 @@ PAGE_HTML = r"""<!DOCTYPE html>
     border-radius: 50%; animation: spin 0.9s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .error { color: var(--ph-pink); }
+  .error { color: var(--pink-text); }
   .banner {
     max-width: 900px; margin: 10px auto 0; padding: 10px 14px;
     border: 1px solid #4a2333; background: var(--card-hl); border-radius: 10px;
     color: var(--text); font-size: 13px;
   }
   .banner ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
+  .banner.stale { border-color: #f5c518; background: #2a2410; font-weight: bold; }
+  .banner[hidden] { display: none; }
   .wrap-banner { padding: 0 16px; }
   .badge {
     display: inline-block; font-size: 11px; font-weight: normal; vertical-align: middle;
-    border: 1px solid var(--ph-pink); color: var(--ph-pink);
+    border: 1px solid var(--ph-pink); color: var(--pink-text);
     border-radius: 999px; padding: 1px 8px; margin-left: 6px;
   }
 
   footer { text-align: center; color: var(--dim); font-size: 11px; padding: 24px 16px 40px; }
-  footer a { color: var(--ph-pink); text-decoration: none; }
+  footer a { color: var(--pink-text); text-decoration: underline; }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 </style>
 </head>
 <body>
   <header>
-    <img src="https://s3picturehouses.s3.eu-central-1.amazonaws.com/settings/ph1551963779.png" alt="Picturehouse">
-    <h1>— Cinema Listings —</h1>
+    <h1>Cinema Listings</h1>
     <div class="sub">Evening &amp; weekend showtimes · next 7 days · Clapham &amp; Ritzy</div>
   </header>
 
   <div class="toolbar">
     <div class="toolbar-inner">
-      <div class="pills" id="pills"></div>
+      <div class="pills" id="pills" role="group" aria-label="Cinema"></div>
       <div class="controls">
+        <label for="search" class="visually-hidden">Search films</label>
         <input type="search" id="search" placeholder="Search title, director…" autocomplete="off">
         <label class="toggle"><input type="checkbox" id="hlOnly"> Highlights only ⭐</label>
         <button class="btn" id="refresh">↻ Refresh</button>
@@ -185,6 +188,7 @@ PAGE_HTML = r"""<!DOCTYPE html>
     <span id="updated"></span>
   </div>
 
+  <div class="wrap-banner"><div class="banner stale" id="stale" role="alert" hidden></div></div>
   <div class="wrap-banner"><div class="banner" id="banner" hidden></div></div>
 
   <main>
@@ -194,8 +198,10 @@ PAGE_HTML = r"""<!DOCTYPE html>
   </main>
 
   <footer>
-    Scores: Metacritic · IMDb · Rotten Tomatoes ·
-    Listings from <a href="https://film.datathistle.com/">Data Thistle</a><br>
+    Listings from <span id="sources"><a href="https://www.picturehouses.com/">Picturehouse Cinemas</a> and <a href="https://film.datathistle.com/">Data Thistle</a></span><br>
+    Scores from OMDb, TMDB, IMDb, Metacritic and Rotten Tomatoes.
+    This product uses the TMDB API but is not endorsed or certified by TMDB.<br>
+    Not affiliated with Picturehouse Cinemas.<br>
     ⭐ = Metacritic ≥ 76 or IMDb ≥ 7.7
   </footer>
 
@@ -244,24 +250,30 @@ function buildPills() {
   const pills = ["All", ...cinemas];
   $("pills").innerHTML = pills.map((name) => {
     const val = name === "All" ? "" : name;
-    const active = (state.cinema || "") === val ? " active" : "";
-    return `<button class="pill${active}" data-cinema="${esc(val)}">${esc(name)}</button>`;
+    const on = (state.cinema || "") === val;
+    return `<button class="pill${on ? " active" : ""}" aria-pressed="${on}" data-cinema="${esc(val)}">${esc(name)}</button>`;
   }).join("");
   $("pills").querySelectorAll(".pill").forEach((p) => {
     p.addEventListener("click", () => {
       state.cinema = p.dataset.cinema || null;
       buildPills();
+      // The buttons were rebuilt: keep keyboard focus on the one just chosen
+      $("pills").querySelector(`[data-cinema="${CSS.escape(p.dataset.cinema)}"]`).focus();
       render();
     });
   });
 }
 
+// Spoken and shown names for the score icons
+const SCORE_NAMES = { metacritic: "Metacritic", imdb: "IMDb", rotten_tomatoes: "Rotten Tomatoes" };
+
 function scoreEl(kind, value, url, suffix) {
+  const icon = `<img src="${ICONS[kind]}" alt="${SCORE_NAMES[kind]}" width="14" height="14">`;
   if (value == null) {
-    return `<span class="score na"><img src="${ICONS[kind]}" alt="">–</span>`;
+    return `<span class="score na">${icon}N/A</span>`;
   }
   const label = esc(value) + (suffix || "");
-  const inner = `<img src="${ICONS[kind]}" alt="">${label}`;
+  const inner = `${icon}${label}`;
   return url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${inner}</a>`
              : `<span class="score">${inner}</span>`;
 }
@@ -312,7 +324,7 @@ function cardHtml(film) {
     ? '<span class="na" title="Score lookup ran out of time for this film">scores incomplete</span>'
     : "");
   return `<div class="card${film.highlighted ? " hl" : ""}">
-    <div class="title">${esc(film.title)}${film.highlighted ? '<span class="star">⭐</span>' : ""}${film.considering ? '<span class="badge">Wait and see</span>' : ""}</div>
+    <div class="title">${esc(film.title)}${film.highlighted ? '<span class="star" role="img" aria-label="Highlight: Metacritic 76 or more, or IMDb 7.7 or more">⭐</span>' : ""}${film.considering ? '<span class="badge">Wait and see</span>' : ""}</div>
     ${meta ? `<div class="metaline">${meta}</div>` : ""}
     ${film.logline ? `<div class="logline">${esc(film.logline)}</div>` : ""}
     <div class="showtimes">${showtimesHtml(film)}</div>
@@ -360,9 +372,36 @@ function renderBanner(data) {
   $("banner").hidden = false;
 }
 
+// A snapshot only changes when the site is rebuilt (daily). If a rebuild has
+// not happened, say so plainly rather than showing old listings as current.
+const STALE_AFTER_HOURS = 36;
+
+function renderStale(data) {
+  const built = data.fetched_at ? Date.parse(data.fetched_at) : NaN;
+  const hours = (Date.now() - built) / 3600000;
+  if (!window.STATIC_SNAPSHOT || !(hours > STALE_AFTER_HOURS)) { $("stale").hidden = true; return; }
+  $("stale").textContent =
+    `These listings were collected on ${data.fetched_at_label} and are out of date. ` +
+    "Showtimes may have changed: check the cinema's own website before you book.";
+  $("stale").hidden = false;
+}
+
+// Name only the sources this snapshot actually used (both, if not recorded).
+const SOURCE_LINKS = {
+  "Picturehouse": '<a href="https://www.picturehouses.com/">Picturehouse Cinemas</a>',
+  "Data Thistle": '<a href="https://film.datathistle.com/">Data Thistle</a>',
+};
+
+function renderSources(data) {
+  const used = (data.sources || []).filter((s) => s in SOURCE_LINKS);
+  if (used.length) $("sources").innerHTML = used.map((s) => SOURCE_LINKS[s]).join(" and ");
+}
+
 function render() {
   const data = state.data;
   if (!data) return;
+  renderSources(data);
+  renderStale(data);
   renderBanner(data);
   if (data.error && (!data.films || data.films.length === 0)) {
     const retry = window.STATIC_SNAPSHOT ? "Try again later." : "Try Refresh in a moment.";
@@ -372,7 +411,11 @@ function render() {
     const live = upcoming(data.films);
     const films = live.filter(matches);
     if (films.length === 0) {
-      $("content").innerHTML = '<div class="state">No films match your filters.</div>';
+      // Say why the page is empty: old listings, not the visitor's filters
+      const why = live.length === 0 && (data.films || []).length > 0
+        ? "Every showtime in these listings has already started. Check the cinema's own website."
+        : "No films match your filters.";
+      $("content").innerHTML = `<div class="state">${why}</div>`;
     } else {
       $("content").innerHTML = '<div class="grid">' + films.map(cardHtml).join("") + '</div>';
     }

@@ -1,88 +1,83 @@
-# Handover: review + fix listings collection
+# Handover
 
-**Repo:** `RobertsMacros/cinema-checking-bot`, `main` branch (the web app arrived in the PR from `claude/newsletter-cinema-webapp-0vlt2a`)
+**Repo:** `RobertsMacros/cinema-checking-bot` (public)
 **Live site:** https://clapham-ritzy-cinema.netlify.app (Netlify project `clapham-ritzy-cinema`)
+**Review this follows:** `docs/reviews/playbook-review-2026-11-15.md` (section E lists the open problems)
+**Fixes:** branch `claude/dazzling-hopper-1h5hjl`, merged into `main` through PR #6 on 16 Nov 2026 with Robert's approval. Results per item: `docs/reviews/fixes-2026-11-16.md`. Decisions: `DECISIONS.md`
 
 ## What this project is
 
-A bot that collects film listings for two London cinemas (Clapham Picturehouse and the Ritzy, Brixton), keeps evening/weekend showtimes for the next 7 days, adds review scores (Metacritic, IMDb, Rotten Tomatoes), and outputs them in two ways:
+A bot that collects film listings for two London cinemas (Clapham Picturehouse and the Ritzy, Brixton), keeps evening and weekend showtimes for the next 7 days, adds review scores (Metacritic, IMDb, Rotten Tomatoes) and outputs them two ways:
 
-1. **Email digest.** `python -m cinema_digest.main` runs weekly through `.github/workflows/cinema_digest.yml`.
-2. **Interactive web app.** The page can be filtered by cinema, searched, and set to show highlighted films only.
-   - Local: `python -m cinema_digest.webapp` starts a Flask app with an in-memory cache, serving `/` and `/api/films`.
-   - Hosted: `build_static.py` runs the pipeline at build time and writes `public/films.json` and `public/index.html`. `netlify.toml` configures the build.
+1. **Email digest.** `python -m cinema_digest.main`, run weekly by `.github/workflows/cinema_digest.yml`.
+2. **Web page.** Local: `python -m cinema_digest.webapp` (Flask, in-memory cache). Hosted: `build_static.py` writes `public/films.json` and `public/index.html`, deployed daily by `.github/workflows/deploy_site.yml`.
 
-Pipeline: `scraper.scrape_all()` → `filters.filter_screenings()` → `enrich.enrich_films()` → formatter (email) or `webapp.serialize_film()` (web).
+Pipeline: `scraper.scrape_all()` (Picturehouse pages through headless Chromium, Data Thistle as backup) → `filters.filter_screenings()` → `enrich.enrich_films()` → formatter (email) or `webapp.serialize_film()` (web).
 
-## 1. Main bug: the listings source is missing ~90% of the programme
+## Current state
 
-The scraper uses **Data Thistle** (`config.CINEMAS`). Data Thistle's pages for these cinemas list only a few films, so the parsing is not the problem. Checked on 6–7 Oct 2026:
+| Area | State |
+|---|---|
+| Listings source | Picturehouse cinema pages since 13 Nov (`105f800`), Data Thistle fills gaps and is the fallback |
+| Live website | **Still the 7 Oct manual upload.** It stays frozen until the deploy secrets (R1) are added. Until then the daily "Deploy website" run fails red, by design |
+| Daily website deploy | `deploy_site.yml` builds in GitHub Actions, deploys with the Netlify CLI and checks the live `films.json`. It fails red without its secrets (the old `netlify_rebuild.yml` skipped and went green) |
+| Stale page warning | A static snapshot over 36 hours old shows a yellow "out of date" banner; when every showtime in it has passed, the page says so instead of "No films match your filters" |
+| Incomplete listings | Fewer than 15 films at a cinema, or a fall back to Data Thistle, flags the subject "[CHECK: listings incomplete]" (it used to be a body note only, with a floor of 3) |
+| Digest send time | Scheduled for Tuesday 12:17 UTC (was 17:00 UTC, which GitHub started at 20:10 to 22:07 UTC in Oct and Nov, after the evening's screenings began). See R5 to change it |
+| Provenance | Email, plain text and web footers name the sources actually used, credit OMDb and TMDB (TMDB's required notice) and say "Not affiliated with Picturehouse Cinemas." They used to say "Listings from Data Thistle" even after the switch |
+| Accessibility | Text contrast now 5.2:1 or better on the page (was 3.1 to 3.9:1) and in the email; labelled search box; score icons named; cinema filter reports which is selected and keeps keyboard focus; `lang="en-GB"`; em dashes gone from headings |
+| Event titles | "MUBI FEST LIVE: A LONG WINTER + Q&A" and similar are looked up as the film ("A LONG WINTER"); the digest still shows the listed title. Not yet checked against OMDb itself (needs a live run, R3) |
+| Film page links | The link read from the cinema's own Picturehouse page is kept; the what's-on title match (fragile) only fills films that have none, and isn't fetched when every film has a link |
+| Proof per digest run | Each run uploads a report (digest, Picturehouse pages, `listings_check.json`) and `run_check` turns the run red if a film on the pages is missing from the digest |
+| Tests | Run on every push (including `claude/**` branches), on PRs and weekly; browser tests of the page run in CI |
 
-| Source | Ritzy | Clapham |
+## Needs Robert
+
+Only what needs your accounts, secrets, settings or Mac. Everything else from the earlier list is done or moved to the follow-ups below.
+
+| # | What | Exact steps |
 |---|---|---|
-| Data Thistle page (`/listing/` links in the HTML) | 5 films | 3 films |
-| Picturehouse's own endpoint | **69 films, 334 showtimes** | **64 films, 254 showtimes** |
+| R1 | Turn on the daily website deploy (the live site is still the 7 Oct upload) | 1. Netlify → User settings → Applications → Personal access tokens → New access token; copy it. 2. Netlify → `clapham-ritzy-cinema` → Project configuration → General → Project details → copy Project ID. 3. GitHub → this repo → Settings → Secrets and variables → Actions → New repository secret: `NETLIFY_AUTH_TOKEN` (the token) and `NETLIFY_SITE_ID` (the ID). 4. Actions → Deploy website → Run workflow on `main`. 5. The run should be green and its last step print `OK: <n> films`. 6. Open the site: "Updated" should show today. While you are in Secrets, delete `NETLIFY_BUILD_HOOK` if it is listed (nothing uses it now) |
+| R2 | Add the TMDB key | Free key at themoviedb.org → Settings → API. GitHub → Settings → Secrets and variables → Actions → New repository secret `TMDB_API_KEY`. The next digest run's report should show `tmdb_key_set: true` |
+| R3 | Let What's On feed the Wait and see list | `considering.json` has been `[]` since 28 Sep. What's On's Populate task (`docs/populate-task.md` step f2 in the whats-on repo) is meant to clone this repo, write the file and push to `main`, but nothing has ever arrived, most likely because the session that runs it can't push here. In the Claude task or environment that runs Populate, add `RobertsMacros/cinema-checking-bot` with push access. If you also do R4, that push to `main` will be refused: either let Populate open a PR instead (a change in whats-on) or give it a bypass in the ruleset |
+| R4 | Protect `main` | GitHub → Settings → Rules → Rulesets → New branch ruleset for `main`: require a pull request, require the three `test` status checks, block force pushes. 23 of the 45 commits on `main` before this work were pushed directly. Mind the Populate push in R3 |
+| R5 | Tidy the old branches | This session's git access can only push its own branch, so I couldn't do this. On GitHub → Branches, delete `claude/newsletter-cinema-webapp-0vlt2a`, `claude/readme-roberts-macros` and `claude/whats-on-roadmap-review-02klzo` (all fully merged). For `claude/reformat-logline-display-w9uNK` (two commits never merged through a PR; their changes reached `main` by hand in `2e0f59c`), first make a tag to keep them: Releases → Draft a new release → Choose a tag → type `archive/reformat-logline-display-w9uNK`, target that branch → Create tag, discard the draft. Then delete the branch (DEC-5) |
+| R6 | Keep your personal email out of future commits | On your Mac: `git config --global user.email <id>+RobertsMacros@users.noreply.github.com` (the exact address is on GitHub → Settings → Emails). On that page tick "Keep my email addresses private" and "Block command line pushes that expose my email". 24 older commits carry your personal address. Removing it needs a history rewrite of a public repo, which breaks clones and can't recall copies, so I recommend leaving them |
 
-The page has no pagination and no JavaScript loading. The data is simply not there. The user checked the Ritzy website: about 4 films today and 10–15 tomorrow. The Picturehouse endpoint matched this: 4 showtimes on 6 Oct, then about 22 a day. Data Thistle returned 26 showtimes for the whole week across both cinemas.
+## Follow-ups for an agent session (no Robert needed)
 
-The safety check `MIN_FILMS_PER_CINEMA = 3` in `config.py` is too low to catch this.
+| # | What | How |
+|---|---|---|
+| F1 | Check the first scheduled digest on the new code (Tue 17 Nov, 12:17 UTC) | The run should be green, the subject should have no "[CHECK" tag, and `run_check` should print OK. If GitHub starts it late, note the delay against DEC-1 |
+| F2 | Check the first real deploy once R1 is done | Green run, `site_check` OK, Netlify deploy titled "GitHub Actions run …", and how long the build took (review item E16) |
+| F3 | Hide sold-out sessions | Needs a saved Picturehouse page with a sold-out session. Every digest run's artefact holds the pages (`picturehouse-<cinema>.html`); download one from a week with a sold-out showing (this session's network could not reach artefact storage), save the film's block as a fixture, then drop those sessions in `ph_scraper.parse_ph_listings` with a test |
+| F4 | Publish the coordination records | This session could not reach `RobertsMacros/project-coordination-data`. From a session with `gh` access to it, run `python3 .coordination/report.py retry --event <id> --actor f6939167-7453-452d-837c-185ca19555c4` for each event added on 16 Nov in `.coordination/events/` |
+| F6 | Replace hand-written Data Thistle markup in the parser tests with real pages | `tests/test_scraper.py` (`SAMPLE_HTML`, from before this work) tests the Data Thistle parser on hand-written HTML, against the CLAUDE.md fixture rule. This session could not reach Data Thistle. Each run report now saves `datathistle-<cinema>.html`: download one artefact, trim the pages into `tests/fixtures/` and point those tests at them |
+| F5 | Proposal, not started: house UI rules | The web page and email still use a serif font and middle dots (U1). A restyle should start from two or three mock-ups for Robert to choose from |
 
-### Recommended fix: use Picturehouse's own endpoint as the primary source
+## Done on 16 Nov from the earlier list
 
-This worked from Python `requests` with a browser User-Agent:
+- Review and merge: PR #6, after an independent review and green checks on the final head.
+- Proof on real pages: dry run 43844098986 (no email) read 65 Clapham and 64 Ritzy films, and `run_check` printed "OK: every qualifying Picturehouse film is in the digest".
+- Send time kept at 12:17 UTC (DEC-1). MIT licence added (DEC-2). Logo removed from the public page (DEC-3). Highlight and Wait and see bars kept separate (DEC-4).
 
-```python
-s = requests.Session()
-UA = {"User-Agent": "Mozilla/5.0 ... Chrome/120 Safari/537.36", "X-Requested-With": "XMLHttpRequest"}
-page = s.get("https://www.picturehouses.com/cinema/the-ritzy", headers=UA)   # sets session cookie
-token = re.search(r'csrf-token" content="([^"]+)"', page.text).group(1)        # or name="_token" value="..."
-data = s.post(
-    "https://www.picturehouses.com/api/scheduled-movies-ajax",
-    data={"cinema_id": "004", "_token": token},
-    headers={**UA, "X-CSRF-TOKEN": token},
-).json()
-# data["movies"] -> list of films
-```
+## Definition of done for the website
 
-- Cinema IDs are already in `config.CINEMA_CODES`: Ritzy `004`, Clapham `020`. Page slugs come from `config.CINEMA_URLS`.
-- The response has content-type `text/html` but the body is JSON. Use `.json()`.
-- Fields on each film: `ScheduledFilmId` (the `HO000…` code, which can build the `ph_url` directly), `Title`, `show_times`, `image_url` (poster), `available_cinemas`.
-- Fields on each entry in `show_times`: `Showtime` (ISO local time, e.g. `2026-10-25T12:30:00`, no timezone, so treat it as Europe/London), `SessionId`, `ScreenName`, `SeatsAvailable`, `SoldoutStatus`, `SessionAttributesNames` (e.g. `["2D","reDiscover"]`; useful for `screening_type`), `CinemaId`.
-- The response includes dates well beyond 7 days, but `filter_screenings` already handles that.
-- `/api/get-movies-ajax` returned a 500. Don't use it.
-
-Suggested implementation:
-- Add a `picturehouse` source module that returns the same `list[Film]` / `Screening` models, so filtering, enrichment, the email and the web app keep working unchanged.
-- Keep Data Thistle as a fallback only if that's cheap to do.
-- Build per-session booking URLs if the site has a usable pattern. Otherwise use `ph_url`.
-- Raise `MIN_FILMS_PER_CINEMA` to around 15–20.
-- Add fixture-based tests using a saved JSON response. Don't call the network in tests.
-- New features this source allows (nice to have): drop sold-out sessions (`SoldoutStatus`) and show posters (`image_url`). The README lists sold-out detection as a limitation that Data Thistle couldn't support.
-
-## 2. Other issues to review
-
-1. **Daily rebuild needs turning on.** `.github/workflows/netlify_rebuild.yml` POSTs to a Netlify build hook every day. It does nothing until the repo secret `NETLIFY_BUILD_HOOK` is set, and build hooks only work once the project is linked to the repo (item 2). Steps are in the README under "Netlify (static snapshot)". Meanwhile the page hides showtimes that have already started.
-2. **Netlify is not linked to GitHub.** The first deploy was uploaded through the Netlify CLI, so pushing to the repo does not redeploy. Link the repo in the Netlify UI (Project configuration → Build & deploy → Link repository), or deploy from CI.
-3. **Booking links** come from Data Thistle `booking_url`s plus `ph_url` matched by normalised title against the Picturehouse what's-on page (`enrich._enrich_ph_links`). That title matching is fragile, and the new source makes it unnecessary.
-4. **Build time on Netlify.** The build runs the whole pipeline, including enrichment, within `RUN_TIME_BUDGET_SECONDS` (8 min). Going from about 6 films to about 70 will make enrichment much slower. Check that builds stay inside Netlify's limits and that the enrichment caches (`.cache/`) are used well. Netlify does not keep `.cache/` between builds unless it is told to.
-5. **Small item:** `_test_digest.html` is a committed test artefact.
-
-## Definition of done
-
-- Both cinemas return realistic counts (dozens of films, about 10–25 showtimes a day each) in both the email and the web app.
-- Tests pass with no network access (`pytest tests/`).
-- The hosted site rebuilds daily (the `NETLIFY_BUILD_HOOK` secret is set), and pushes to the repo deploy.
-- Docs (`README.md`, `EXPECTATIONS.md`) still match the code after the source change.
+- The latest "Deploy website" run on `main` is green, including its live-site check.
+- The live `films.json` is under 30 hours old, lists at least 5 films with showings at each cinema and carries no incomplete-listings warning (`python -m cinema_digest.site_check` exits 0).
+- Netlify's current deploy says "GitHub Actions run …", not "Deploy triggered by upload".
 
 ## How to run
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
+python -m playwright install chromium
 pytest tests/ -q
 python -m cinema_digest.webapp        # http://127.0.0.1:5000
 python build_static.py                # writes public/ (what Netlify serves)
 python -m cinema_digest.main --dry-run
+python -m cinema_digest.site_check    # is the live site fresh and complete?
 ```
 
-Optional env vars, which improve score lookups: `OMDB_API_KEY` and `TMDB_API_KEY` (see `.env.example`). They are not set on Netlify yet.
+Optional env vars, which improve score lookups: `OMDB_API_KEY` and `TMDB_API_KEY` (see `.env.example`).

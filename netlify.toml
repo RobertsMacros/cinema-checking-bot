@@ -1,9 +1,16 @@
+# The site is built and deployed by GitHub Actions
+# (.github/workflows/deploy_site.yml), which has a working headless Chromium
+# for the Picturehouse pages. Do not also link this repo for Netlify builds:
+# Netlify's build image cannot install Chromium's system libraries, so a
+# Netlify-side build would fall back to Data Thistle only (flagged on the page).
+# The settings below are used by `netlify deploy` and kept so a manual build
+# matches CI.
 [build]
-  command = "pip install -r requirements.txt && python build_static.py"
+  command = "pip install -r requirements.txt && python -m playwright install chromium && python build_static.py"
   publish = "public"
 
 [build.environment]
-  PYTHON_VERSION = "3.11"
+  PYTHON_VERSION = "3.12"
 
 # Listings change daily; don't let browsers/CDN hold stale data for long.
 [[headers]]

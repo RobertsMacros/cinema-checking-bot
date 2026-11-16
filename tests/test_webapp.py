@@ -137,7 +137,7 @@ def test_scrape_failure_becomes_note(monkeypatch):
         raise ConnectionError("down")
 
     monkeypatch.setattr(webapp, "scrape_all", scrape_boom)
-    films, notes, suspect = webapp.build_digest(config=webapp.Config.from_env())
+    films, notes, suspect, sources = webapp.build_digest(config=webapp.Config.from_env())
     assert films == []
     assert suspect is True
     assert "ConnectionError" in notes[0]
@@ -481,7 +481,7 @@ def test_build_digest_reports_incomplete_enrichment(monkeypatch):
     monkeypatch.setattr(webapp.considering, "load", lambda: [])
     monkeypatch.setattr(webapp, "enrich_films", fake_enrich)
 
-    films, notes, suspect = webapp.build_digest(config=webapp.Config.from_env())
+    films, notes, suspect, sources = webapp.build_digest(config=webapp.Config.from_env())
 
     assert any("OMDb daily request limit reached" in n for n in notes)
     assert any("could not be fetched within the time limit" in n for n in notes)

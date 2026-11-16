@@ -108,7 +108,8 @@ def send_digest(
     if dry_run:
         print("=" * 60)
         print(f"DRY RUN - Subject: {subject}")
-        print(f"DRY RUN - To: {', '.join(to_addrs)}")
+        # Count only: GitHub masks the whole EMAIL_TO secret, not each address
+        print(f"DRY RUN - To: {len(to_addrs)} recipient(s)")
         print("=" * 60)
         print(body)
         print("=" * 60)
@@ -140,7 +141,8 @@ def send_digest(
     else:
         attempts.append((SMTP_SSL_PORT, True))
 
-    logger.info("Sending digest to %s via %s", to_addrs, smtp_host)
+    # Count only: split addresses would show unmasked in the public run log
+    logger.info("Sending digest to %d recipient(s) via %s", len(to_addrs), smtp_host)
     last_error: _NotSent | None = None
     for port, implicit_tls in attempts:
         method = "SMTP_SSL" if implicit_tls else "STARTTLS"

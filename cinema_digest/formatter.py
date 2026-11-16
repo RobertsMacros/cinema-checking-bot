@@ -21,6 +21,10 @@ PH_WHITE = "#ffffff"
 PH_LIGHT_GREY = "#f5f5f5"
 PH_MID_GREY = "#888888"
 
+# Pink text on the dark background, lighter than PH_PINK so small text has
+# at least 4.5:1 contrast (PH_PINK on DARK_BG is about 3.7:1)
+LINK_ON_DARK = "#ff5c87"
+
 # Dark theme colours
 DARK_BG = "#1a1a1a"
 DARK_CARD = "#222222"
@@ -28,14 +32,14 @@ DARK_CARD_HL = "#2a1a1e"
 DARK_BORDER = "#333333"
 DARK_TEXT = "#eeeeee"
 DARK_TEXT_MUTED = "#aaaaaa"
-DARK_TEXT_DIM = "#666666"
+DARK_TEXT_DIM = "#8f8f8f"  # 4.9:1 or better on the dark backgrounds (was #666666, 3.0:1)
 
 # Font stack
 FONT_STACK = "Georgia,'Times New Roman',Times,serif"
 
 PH_LOGO_URL = "https://s3picturehouses.s3.eu-central-1.amazonaws.com/settings/ph1551963779.png"
 
-# Score source icons (Google favicon API — reliable for email)
+# Score source icons (Google favicon API, reliable for email)
 ICON_MC = "https://www.google.com/s2/favicons?domain=metacritic.com&sz=32"
 ICON_IMDB = "https://www.google.com/s2/favicons?domain=imdb.com&sz=32"
 ICON_RT = "https://www.google.com/s2/favicons?domain=rottentomatoes.com&sz=32"
@@ -62,6 +66,34 @@ LISTINGS_SUSPECT_NOTE = (
     "probably incomplete. See the notes below."
 )
 SCORES_INCOMPLETE_LABEL = "scores not fetched (time limit)"
+
+# Where listings can come from (ScrapeResult.sources), with a link for each
+LISTING_SOURCES = {
+    "Picturehouse": ("Picturehouse Cinemas", "https://www.picturehouses.com/"),
+    "Data Thistle": ("Data Thistle", "https://film.datathistle.com/"),
+}
+# Credits the score providers' terms ask for (TMDB requires this notice),
+# and a plain statement that this is not an official Picturehouse page.
+SCORE_CREDITS = (
+    "Scores from OMDb, TMDB, IMDb, Metacritic and Rotten Tomatoes. "
+    "This product uses the TMDB API but is not endorsed or certified by TMDB."
+)
+NOT_AFFILIATED = "Not affiliated with Picturehouse Cinemas."
+
+
+def _source_names(sources: list[str] | None) -> list[str]:
+    """Display names for this run's listing sources (both, if not recorded)."""
+    keys = [s for s in (sources or []) if s in LISTING_SOURCES] or list(LISTING_SOURCES)
+    return [LISTING_SOURCES[k][0] for k in keys]
+
+
+def _source_links_html(sources: list[str] | None) -> str:
+    keys = [s for s in (sources or []) if s in LISTING_SOURCES] or list(LISTING_SOURCES)
+    links = [
+        f'<a href="{url}" style="color:{LINK_ON_DARK};text-decoration:underline;">{_esc(name)}</a>'
+        for name, url in (LISTING_SOURCES[k] for k in keys)
+    ]
+    return " and ".join(links)
 
 
 def is_highlighted(scores: Scores | None) -> bool:
@@ -136,11 +168,9 @@ def format_film_line(film: Film) -> str:
     showtimes = _format_showtimes(film.screenings)
     booking = _format_booking_link_plain(film)
 
-    title_parts = [film.title]
-    if film.director:
-        title_parts.append(f"dir. {film.director}")
+    title = f"{film.title} (dir. {film.director})" if film.director else film.title
 
-    parts = [f"- **{' — '.join(title_parts)}**"]
+    parts = [f"- **{title}**"]
     flag = _considering.label(film)
     if flag:
         parts.append(f"[{flag}]")
@@ -178,11 +208,13 @@ def format_digest(
     now: datetime | None = None,
     notes: list[str] | None = None,
     listings_suspect: bool = False,
+    sources: list[str] | None = None,
 ) -> str:
     """Format the complete plain-text digest body.
 
     notes are shown under the header (e.g. scraping problems);
-    listings_suspect adds a warning banner even when some films were found.
+    listings_suspect adds a warning banner even when some films were found;
+    sources (ScrapeResult.sources) are named in the footer.
     """
     if now is None:
         now = datetime.now(LONDON_TZ)
@@ -202,10 +234,15 @@ def format_digest(
     if notes:
         header += "Notes:\n" + "".join(f"* {n}\n" for n in notes) + "\n"
 
+    footer = (
+        "\n" + "-" * 50 + "\n"
+        f"Listings from: {' and '.join(_source_names(sources))}\n"
+        f"{SCORE_CREDITS}\n{NOT_AFFILIATED}\n"
+    )
     if not lines:
-        return header
+        return header + footer
 
-    return header + "\n".join(lines) + "\n"
+    return header + "\n".join(lines) + "\n" + footer
 
 
 # ---------------------------------------------------------------------------
@@ -216,19 +253,24 @@ def _esc(text: str) -> str:
     return html_module.escape(text)
 
 
-def _score_icon(url: str) -> str:
-    return f'<img src="{url}" width="14" height="14" alt="" style="vertical-align:middle;margin-right:2px;">'
+ICON_NAMES = {ICON_MC: "Metacritic", ICON_IMDB: "IMDb", ICON_RT: "Rotten Tomatoes"}
+
+
+def _score_icon(url: str, alt: str = "") -> str:
+    """A score source icon. Next to a bare number it needs alt text naming the
+    source; next to the written name (the footer legend) it is decorative."""
+    return f'<img src="{url}" width="14" height="14" alt="{_esc(alt)}" style="vertical-align:middle;margin-right:2px;">'
 
 
 def _score_link(icon_url: str, label: str, link_url: str | None) -> str:
-    icon = _score_icon(icon_url)
+    icon = _score_icon(icon_url, ICON_NAMES.get(icon_url, ""))
     if link_url:
         return f'<a href="{_esc(link_url)}" style="color:{DARK_TEXT};text-decoration:none;">{icon}{label}</a>'
     return f'{icon}{label}'
 
 
 def _format_scores_html(scores: Scores | None, incomplete: bool = False) -> str:
-    na = f'<span style="color:{DARK_TEXT_DIM};">—</span>'
+    na = f'<span style="color:{DARK_TEXT_DIM};">N/A</span>'
 
     def _val(v, fmt):
         return fmt(v) if v is not None else na
@@ -366,7 +408,7 @@ def _book_buttons_html(film: Film, on_pink: bool = False) -> str:
         url = _film_booking_url(film)
         return f'<a href="{_esc(url)}" style="{btn}">Book</a>'
 
-    # Both cinemas — one button each, for that cinema's earliest screening
+    # Both cinemas: one button each, for that cinema's earliest screening
     buttons = []
     for cinema in cinemas:
         cinema_url = _film_booking_url(film, cinema)
@@ -449,6 +491,7 @@ def format_digest_html(
     now: datetime | None = None,
     notes: list[str] | None = None,
     listings_suspect: bool = False,
+    sources: list[str] | None = None,
 ) -> str:
     """Format the complete HTML email with Picturehouse branding."""
     if now is None:
@@ -466,7 +509,7 @@ def format_digest_html(
         star_legend = f'<br>&#11088; = Metacritic &ge; 76 or IMDb &ge; 7.7'
 
     return f"""<!DOCTYPE html>
-<html>
+<html lang="en-GB">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
@@ -481,7 +524,7 @@ def format_digest_html(
 <!-- Header -->
 <tr><td style="background:{DARK_BG};padding:24px 20px;text-align:center;">
   <img src="{PH_LOGO_URL}" alt="Picturehouse Cinemas" width="185" height="109" style="width:185px;height:109px;margin-bottom:12px;display:block;margin-left:auto;margin-right:auto;-ms-interpolation-mode:bicubic;image-rendering:-webkit-optimize-contrast;">
-  <div style="color:{PH_WHITE};font-size:24px;font-weight:bold;letter-spacing:0.5px;font-family:{FONT_STACK};">&mdash;&ensp;Cinema Digest&ensp;&mdash;</div>
+  <div style="color:{PH_WHITE};font-size:24px;font-weight:bold;letter-spacing:0.5px;font-family:{FONT_STACK};">Cinema Digest</div>
   <div style="color:{DARK_TEXT_MUTED};font-size:13px;margin-top:4px;">{_esc(date_str)}</div>
 </td></tr>
 
@@ -503,7 +546,9 @@ def format_digest_html(
 <tr><td style="background:{DARK_BG};padding:20px;text-align:center;">
   <div style="color:{DARK_TEXT_DIM};font-size:11px;line-height:1.6;">
     Scores: {_score_icon(ICON_MC)}Metacritic &middot; {_score_icon(ICON_IMDB)}IMDb &middot; {_score_icon(ICON_RT)}Rotten Tomatoes{star_legend}<br>
-    Listings from <a href="https://film.datathistle.com/" style="color:{PH_PINK};text-decoration:none;">Data Thistle</a>
+    Listings from {_source_links_html(sources)}<br>
+    {_esc(SCORE_CREDITS)}<br>
+    {_esc(NOT_AFFILIATED)}
   </div>
 </td></tr>
 
