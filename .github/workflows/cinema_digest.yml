@@ -2,8 +2,11 @@ name: Cinema Digest
 
 on:
   schedule:
-    # Tuesday 5pm UTC = 6pm BST (UK summer) / 5pm GMT (UK winter)
-    - cron: '0 17 * * 2'
+    # Tuesday 12:17 UTC (12:17 GMT, 13:17 BST). GitHub starts scheduled runs
+    # late: the old 17:00 schedule began between 20:10 and 22:07 UTC in Oct
+    # and Nov 2026, after Tuesday's evening screenings had started (and so
+    # were left out). Starting earlier, off the hour, leaves room for that.
+    - cron: '17 12 * * 2'
   workflow_dispatch: # Allow manual trigger
     inputs:
       dry_run:

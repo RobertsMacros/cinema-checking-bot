@@ -195,7 +195,7 @@ The live tests against Data Thistle are skipped unless you ask for them:
 
 The script is designed to run unattended on a schedule. It does not need a web server or the computer to be logged in -- it just needs the machine to be powered on and connected to the internet.
 
-All the examples run weekly on Tuesday at 18:00 London time, matching the GitHub Actions schedule (Option 6). Replace `/path/to/cinema-checking-bot` with the real path.
+All the examples run weekly on Tuesday at 18:00 London time. A local scheduler starts on time, so 18:00 still catches that evening's showings; GitHub Actions does not (see Option 6). Replace `/path/to/cinema-checking-bot` with the real path.
 
 ### Option 1: cron (Linux / macOS)
 
@@ -342,11 +342,11 @@ If your local machine is not always on, run this on a cheap Linux VM (e.g. a fre
 
 ### Option 6: GitHub Actions
 
-If this repo is pushed to GitHub, the included workflow at `.github/workflows/cinema_digest.yml` runs **weekly on Tuesday at 17:00 UTC** (18:00 BST in summer, 17:00 GMT in winter). It can also be run by hand from the Actions tab. Add your secrets in the repo's Settings > Secrets and variables > Actions; secrets you leave undefined (e.g. `SMTP_PORT`) fall back to the defaults above.
+If this repo is pushed to GitHub, the included workflow at `.github/workflows/cinema_digest.yml` is scheduled **weekly on Tuesday at 12:17 UTC** (12:17 GMT in winter, 13:17 BST in summer). GitHub starts scheduled runs late, and on-the-hour schedules most: the old 17:00 UTC schedule started between 20:10 and 22:07 UTC in October and November 2026, by which time Tuesday's evening screenings had begun and were left out. Starting at 12:17 means even the worst delay seen (5 hours 7 minutes) arrives by 17:24. It can also be run by hand from the Actions tab. Add your secrets in the repo's Settings > Secrets and variables > Actions; secrets you leave undefined (e.g. `SMTP_PORT`) fall back to the defaults above.
 
 Notes:
 
-- GitHub often starts scheduled runs late, sometimes by an hour or more.
+- GitHub often starts scheduled runs late, by up to 5 hours in late 2026 (hence 12:17).
 - GitHub disables scheduled workflows in public repos after 60 days without repository activity. The workflow's last step re-enables itself through the API (using the built-in token, no commits) to prevent that. If the schedule has been disabled anyway, re-enable it from the Actions tab.
 - The run has an 8-minute time budget and always sends; score lookups that don't finish in time are marked in the digest. The job timeout (15 minutes) is only a backstop.
 

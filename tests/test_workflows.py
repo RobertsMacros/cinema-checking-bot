@@ -38,6 +38,16 @@ def test_actions_are_on_node_24_versions():
             assert int(version) >= minimum.get(action, 0), f"{name}: {action}@v{version}"
 
 
+def test_digest_is_scheduled_early_enough_to_survive_github_delays():
+    # Scheduled at 17:00 UTC it started between 20:10 and 22:07 UTC in Oct and
+    # Nov 2026, after Tuesday's evening screenings had begun. Start by 12:xx
+    # UTC, off the hour (on-the-hour schedules are delayed most). The worst
+    # delay seen was 5 h 7 min, so 12:17 still arrives before 18:00.
+    minute, hour = re.search(r"cron:\s*'(\d+) (\d+) \* \* 2'", _read("cinema_digest.yml")).groups()
+    assert int(minute) != 0
+    assert int(hour) <= 12
+
+
 def test_digest_run_saves_its_output_and_checks_it_against_the_pages():
     text = _read("cinema_digest.yml")
     assert "--report run-report" in text
