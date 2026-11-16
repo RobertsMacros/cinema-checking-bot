@@ -97,7 +97,7 @@ python -m cinema_digest.webapp
 
 Then open <http://127.0.0.1:5000>. The page lets you:
 
-- **Filter by cinema** (All / Clapham / Ritzy) — a film's showtimes and booking
+- **Filter by cinema** (All / Clapham / Ritzy): a film's showtimes and booking
   buttons narrow to just the selected cinema.
 - **Search** by title, director, or logline.
 - Toggle **Highlights only** (Metacritic ≥ 76 or IMDb ≥ 7.7).
@@ -223,8 +223,8 @@ cron runs whether or not you are logged in, as long as the machine is on.
 
 launchd reads jobs from two places:
 
-- `/Library/LaunchDaemons/` — system jobs; they run at boot whether or not anyone is logged in. The plist must be owned by `root:wheel` with mode `644`. Use the `UserName` key so the job runs as you, not root.
-- `~/Library/LaunchAgents/` — per-user jobs; they run only while you are logged in. Leave out `UserName`.
+- `/Library/LaunchDaemons/`: system jobs; they run at boot whether or not anyone is logged in. The plist must be owned by `root:wheel` with mode `644`. Use the `UserName` key so the job runs as you, not root.
+- `~/Library/LaunchAgents/`: per-user jobs; they run only while you are logged in. Leave out `UserName`.
 
 (`~/Library/LaunchDaemons/` is not a location launchd reads, so a plist there never runs after a reboot.)
 
