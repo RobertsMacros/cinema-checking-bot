@@ -2,6 +2,9 @@
 
 Follow existing repository documentation and the user's authorised scope.
 
+Project facts and the rules learned from this repo's history are in
+`CLAUDE.md` (section "Project facts"); they apply to every agent.
+
 <!-- project-coordination:reporting-v2:start -->
 ## Shared progress reporting
 

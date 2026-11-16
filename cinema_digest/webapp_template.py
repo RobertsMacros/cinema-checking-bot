@@ -151,6 +151,8 @@ PAGE_HTML = r"""<!DOCTYPE html>
     color: var(--text); font-size: 13px;
   }
   .banner ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
+  .banner.stale { border-color: #f5c518; background: #2a2410; font-weight: bold; }
+  .banner[hidden] { display: none; }
   .wrap-banner { padding: 0 16px; }
   .badge {
     display: inline-block; font-size: 11px; font-weight: normal; vertical-align: middle;
@@ -185,6 +187,7 @@ PAGE_HTML = r"""<!DOCTYPE html>
     <span id="updated"></span>
   </div>
 
+  <div class="wrap-banner"><div class="banner stale" id="stale" role="alert" hidden></div></div>
   <div class="wrap-banner"><div class="banner" id="banner" hidden></div></div>
 
   <main>
@@ -360,9 +363,24 @@ function renderBanner(data) {
   $("banner").hidden = false;
 }
 
+// A snapshot only changes when the site is rebuilt (daily). If a rebuild has
+// not happened, say so plainly rather than showing old listings as current.
+const STALE_AFTER_HOURS = 36;
+
+function renderStale(data) {
+  const built = data.fetched_at ? Date.parse(data.fetched_at) : NaN;
+  const hours = (Date.now() - built) / 3600000;
+  if (!window.STATIC_SNAPSHOT || !(hours > STALE_AFTER_HOURS)) { $("stale").hidden = true; return; }
+  $("stale").textContent =
+    `These listings were collected on ${data.fetched_at_label} and are out of date. ` +
+    "Showtimes may have changed: check the cinema's own website before you book.";
+  $("stale").hidden = false;
+}
+
 function render() {
   const data = state.data;
   if (!data) return;
+  renderStale(data);
   renderBanner(data);
   if (data.error && (!data.films || data.films.length === 0)) {
     const retry = window.STATIC_SNAPSHOT ? "Try again later." : "Try Refresh in a moment.";

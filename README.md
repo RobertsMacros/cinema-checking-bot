@@ -116,18 +116,45 @@ mid-refresh, and the cache never fills.
 
 ### Netlify (static snapshot)
 
-`netlify.toml` builds a static copy with `build_static.py`. The listings are
-collected at build time, so the site needs rebuilding to stay current; the
-page hides showtimes that have already started and has no Refresh button.
+The hosted site (<https://clapham-ritzy-cinema.netlify.app>) is a static copy
+made by `build_static.py`. The listings are collected at build time, so the
+site is rebuilt and redeployed every day by
+`.github/workflows/deploy_site.yml` (04:43 UTC, or by hand from the Actions
+tab). That workflow:
 
-`.github/workflows/netlify_rebuild.yml` rebuilds it daily. To turn it on:
+1. fails straight away if the secrets `NETLIFY_AUTH_TOKEN` or
+   `NETLIFY_SITE_ID` are missing, so a site that isn't being updated shows up
+   as a red run, not a green one;
+2. installs headless Chromium and runs `build_static.py` (the build itself
+   fails if no films were collected, so a broken scrape never replaces a
+   working site);
+3. deploys `public/` with the Netlify CLI;
+4. checks the live `films.json` from outside with
+   `python -m cinema_digest.site_check`: the listings must be under 2 hours
+   old, list at least 15 films and include both cinemas.
 
-1. Link the Netlify project to this repo (Project configuration → Build &
-   deploy → Link repository). Build hooks only work for linked projects.
-2. Create a build hook (Project configuration → Build & deploy → Build hooks).
-3. Add its URL as the repo secret `NETLIFY_BUILD_HOOK`.
+To turn it on, add two repository secrets (Settings → Secrets and variables →
+Actions):
 
-Until the secret exists the workflow logs a warning and does nothing.
+- `NETLIFY_AUTH_TOKEN`: a Netlify personal access token (Netlify → User
+  settings → Applications → Personal access tokens → New access token).
+- `NETLIFY_SITE_ID`: the project's ID (Netlify → the
+  `clapham-ritzy-cinema` project → Project configuration → General →
+  Project details → Project ID).
+
+Then run "Deploy website" once from the Actions tab and check it goes green.
+Don't also link the repo for Netlify-side builds: Netlify's build image can't
+install Chromium's system libraries (see `netlify.toml`).
+
+On the page, showtimes that have already started are hidden and there is no
+Refresh button. If a snapshot is more than 36 hours old, a yellow banner says
+the listings are out of date and to check the cinema's own website.
+
+You can check the live site at any time:
+
+```bash
+python -m cinema_digest.site_check            # exits 1 and says why if it is stale or thin
+```
 
 ## Running tests
 
@@ -136,7 +163,9 @@ Until the secret exists the workflow logs a warning and does nothing.
 .venv/bin/python -m pytest tests/ -v
 ```
 
-Unit tests run offline (any network access fails the test). The live tests against Data Thistle are skipped unless you ask for them:
+Unit tests run offline (any network access fails the test). Tests of the web page render it in headless Chromium with its data inlined and the clock frozen; they need `python -m playwright install chromium` once, and are skipped if Chromium can't start (CI sets `REQUIRE_BROWSER_TESTS=1`, so there they fail instead). If Playwright's own browser download is missing, point `PLAYWRIGHT_CHROMIUM_EXECUTABLE` at a Chromium binary. CI runs the suite on every push, on pull requests and every Monday morning.
+
+The live tests against Data Thistle are skipped unless you ask for them:
 
 ```bash
 .venv/bin/python -m pytest -m integration      # or: RUN_INTEGRATION=1 pytest tests/

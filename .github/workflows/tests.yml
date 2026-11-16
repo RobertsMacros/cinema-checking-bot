@@ -2,9 +2,14 @@ name: Tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'claude/**']
   pull_request:
     branches: [main]
+  # Weekly, so tests that depend on the date (or a dependency release) fail
+  # within days, not months after the last push.
+  schedule:
+    - cron: '23 6 * * 1'
+  workflow_dispatch:
 
 jobs:
   test:
@@ -14,10 +19,10 @@ jobs:
         python-version: ['3.11', '3.12', '3.13']
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
@@ -27,5 +32,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-dev.txt
 
+      - name: Install headless Chromium (web page tests)
+        run: python -m playwright install --with-deps chromium
+
       - name: Run unit tests
+        env:
+          # Browser tests must run here, not skip
+          REQUIRE_BROWSER_TESTS: '1'
         run: python -m pytest tests/ -v --ignore=tests/test_integration.py --tb=short

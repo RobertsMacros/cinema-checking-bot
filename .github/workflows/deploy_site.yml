@@ -1,0 +1,71 @@
+name: Deploy website
+
+# The hosted site (https://clapham-ritzy-cinema.netlify.app) is a build-time
+# snapshot, so it is rebuilt and deployed here every day, then checked from
+# outside. Building here (not on Netlify) gives the build a working headless
+# Chromium for the Picturehouse pages.
+#
+# Needs two repository secrets: NETLIFY_AUTH_TOKEN (a Netlify personal access
+# token) and NETLIFY_SITE_ID (the site's API ID). Without them the run FAILS,
+# so a site that is not being updated shows up red, not green.
+on:
+  schedule:
+    # 04:43 UTC daily (off the hour: GitHub delays on-the-hour schedules most)
+    - cron: '43 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check the deploy secrets are set
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        run: |
+          missing=""
+          [ -n "$NETLIFY_AUTH_TOKEN" ] || missing="$missing NETLIFY_AUTH_TOKEN"
+          [ -n "$NETLIFY_SITE_ID" ] || missing="$missing NETLIFY_SITE_ID"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secret(s):$missing. The website is NOT being updated. See README, 'Netlify (static snapshot)'."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install headless Chromium (reads the Picturehouse pages)
+        run: python -m playwright install --with-deps chromium
+
+      - name: Restore score cache
+        uses: actions/cache@v5
+        with:
+          path: .cache
+          key: site-cache-${{ github.run_number }}
+          restore-keys: site-cache-
+
+      - name: Build the site
+        env:
+          OMDB_API_KEY: ${{ secrets.OMDB_API_KEY }}
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+        run: python build_static.py
+
+      - name: Deploy to Netlify
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        run: npx --yes netlify-cli@27.16.1 deploy --prod --no-build --dir public --site "$NETLIFY_SITE_ID" --message "GitHub Actions run ${{ github.run_id }}"
+
+      - name: Check the live site is fresh and complete
+        run: python -m cinema_digest.site_check --max-age-hours 2
