@@ -27,6 +27,7 @@ Pipeline: `scraper.scrape_all()` (Picturehouse pages through headless Chromium, 
 | Provenance | Email, plain text and web footers name the sources actually used, credit OMDb and TMDB (TMDB's required notice) and say "Not affiliated with Picturehouse Cinemas." They used to say "Listings from Data Thistle" even after the switch |
 | Accessibility | Text contrast now 5.2:1 or better on the page (was 3.1 to 3.9:1) and in the email; labelled search box; score icons named; cinema filter reports which is selected and keeps keyboard focus; `lang="en-GB"`; em dashes gone from headings |
 | Event titles | "MUBI FEST LIVE: A LONG WINTER + Q&A" and similar are looked up as the film ("A LONG WINTER"); the digest still shows the listed title. Not yet checked against OMDb itself (needs a live run, R3) |
+| Film page links | The link read from the cinema's own Picturehouse page is kept; the what's-on title match (fragile) only fills films that have none, and isn't fetched when every film has a link |
 | Proof per digest run | Each run uploads a report (digest, Picturehouse pages, `listings_check.json`) and `run_check` turns the run red if a film on the pages is missing from the digest |
 | Tests | Run on every push (including `claude/**` branches), on PRs and weekly; browser tests of the page run in CI |
 

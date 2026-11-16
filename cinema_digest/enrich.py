@@ -910,14 +910,22 @@ def _build_ph_url(ho_code: str, slug: str, cinema: str) -> str:
 
 
 def _enrich_ph_links(films: list[Film], session: requests.Session) -> None:
-    """Set ph_url on each film by matching against PH website."""
+    """Set ph_url on films that have none by matching titles on the PH website.
+
+    Films read from a cinema's Picturehouse page already carry their own
+    link; that link is kept (title matching here is only a guess), and the
+    what's-on page is not fetched at all when every film has one.
+    """
+    missing = [f for f in films if not f.ph_url]
+    if not missing:
+        return
     try:
         codes = _fetch_ph_film_codes(session)
     except Exception:
         logger.exception("Failed to fetch PH film codes")
         return
 
-    for film in films:
+    for film in missing:
         norm = normalize_title(film.title)
         match = codes.get(norm)
         if match:
