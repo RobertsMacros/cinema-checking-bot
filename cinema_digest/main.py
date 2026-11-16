@@ -34,7 +34,7 @@ _SECRET_PARAM = re.compile(r"((?:api_?key|apikey|token|password)=)[^&\s'\"]+", r
 
 # Email addresses: GitHub masks the whole EMAIL_TO secret but not single
 # addresses, which SMTP errors (e.g. SMTPRecipientsRefused) put in tracebacks
-_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_EMAIL = re.compile(r"[\w.+-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63})+")  # bounded: linear time
 
 
 def redact(text: str) -> str:

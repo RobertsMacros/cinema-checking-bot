@@ -50,3 +50,15 @@ def test_addresses_in_errors_are_redacted_from_logs():
     text = record.getMessage() + (record.exc_text or "")
     assert "SMTPRecipientsRefused" in text
     assert not any(a in text for a in ADDRESSES)
+
+
+def test_redaction_stays_fast_on_long_unbroken_text():
+    # An unbounded [\w.+-]+@ took 10 s on 50,000 characters with no "@"
+    import time
+
+    from cinema_digest.main import redact
+
+    started = time.monotonic()
+    assert redact("a" * 50_000) == "a" * 50_000
+    assert time.monotonic() - started < 0.5
+    assert redact("to first.last+x@mail.example.co.uk now") == "to ***@*** now"
