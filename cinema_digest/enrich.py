@@ -92,9 +92,29 @@ def _write_cache(key: str, data: dict | None) -> None:
         logger.warning("Could not write cache file: %s", key)
 
 
+# Picturehouse series and event labels put in front of a film's title, e.g.
+# "MUBI FEST LIVE: A LONG WINTER" or "Parent & Baby Screening: Wicked". Only
+# these known labels are removed: real titles often contain a colon.
+_EVENT_PREFIX = re.compile(
+    r"^(?:mubi fest live|(?:exclusive\s+)?preview|parent\s*&\s*baby(?:\s+screening)?|toddler time|"
+    r"kids'?\s+club|silver screen|members'?\s+screening|bar trash|culture shock|discover tuesdays|"
+    r"throwback)\s*:\s*",
+    re.IGNORECASE,
+)
+# Extras added after the title: "+ Q&A", "+ Intro", "+ Recorded Q&A with ..."
+# ("Romeo + Juliet" is left alone: only these event words count).
+_EVENT_SUFFIX = re.compile(
+    r"\s*\+\s*(?:live\s+|recorded\s+|satellite\s+|director\s+)?"
+    r"(?:q\s*&\s*a|intro(?:duction)?|panel|discussion|talk)\b.*$",
+    re.IGNORECASE,
+)
+
+
 def _clean_title_for_search(title: str) -> str:
-    """Strip noise from a title before querying OMDb."""
+    """Strip noise from a title before querying OMDb and the other score sites."""
     t = title.strip()
+    t = _EVENT_PREFIX.sub("", t)
+    t = _EVENT_SUFFIX.sub("", t)
     # Remove trailing year in parens: "Film Name (2026)" -> "Film Name"
     t = re.sub(r"\s*\(\d{4}\)\s*$", "", t)
     # Remove trailing exclamation marks that some listings add

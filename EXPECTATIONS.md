@@ -68,7 +68,7 @@
 - Films listed as "coming soon" may have zero screenings — this is expected. A cinema where every film has zero screenings is not: that is flagged as a likely markup change
 
 ### Enrichment: OMDb Pipeline
-- Strip trailing "(2026)" and "!" from titles before searching
+- Strip trailing "(2026)" and "!" from titles before searching, and Picturehouse event wrappers: known series labels in front ("MUBI FEST LIVE:", "Preview:", "Parent & Baby Screening:", "Kids' Club:" and similar) and extras after ("+ Q&A", "+ Intro"). Real titles with a colon or "+" ("Mission: Impossible", "Romeo + Juliet") are left alone. The digest still shows the title as listed
 - If year specified and no result, retry without year
 - Similarity check prevents "The Drama" from matching "Drama" (different film)
 - Director and plot fields from OMDb enrich the film metadata

@@ -393,7 +393,7 @@ build_static.py       - Builds the static site in public/
 
 - Both listings sources are scraped web pages. If Picturehouse or Data Thistle change their markup, the parsers need updating. The digest is still sent, with a warning at the top and a flagged subject, when a listings page can't be fetched or read, when films are found but no showtimes can be read, when a cinema has fewer than 15 films, or when nothing qualifies for the next 7 days.
 - OMDb free tier is limited to 1000 API calls/day (enough for a normal week's 20 to 40 qualifying films).
-- OMDb does not always have scores for new or niche releases, or for events and stage screenings. These show as N/A.
+- OMDb does not always have scores for new or niche releases, or for stage recordings. These show as N/A. Event wrappers such as "MUBI FEST LIVE:" or "+ Q&A" are removed before looking a film up.
 - Sold-out sessions are still listed: the Picturehouse page markup for a sold-out session hasn't been captured yet (see HANDOVER).
 - The email and page credit their sources and say they are not affiliated with Picturehouse Cinemas.
 
