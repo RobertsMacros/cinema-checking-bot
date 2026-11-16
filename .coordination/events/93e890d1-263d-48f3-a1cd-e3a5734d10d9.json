@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "event_id": "93e890d1-263d-48f3-a1cd-e3a5734d10d9",
+  "task_id": "dbe57c90-c022-441c-9f2e-1626de60bbde",
+  "repository": "RobertsMacros/cinema-checking-bot",
+  "actor_id": "f6939167-7453-452d-837c-185ca19555c4",
+  "parent_event_ids": ["f95b1a10-4819-4094-aa79-a0f93001b295"],
+  "status": "blocked",
+  "title": "Fix the open problems from the 15 Nov playbook review",
+  "scope": "On branch claude/dazzling-hopper-1h5hjl only (no push to main, no merge): save the review at docs/reviews/playbook-review-2026-11-15.md; fix every section E item most serious first, plus section A mistakes still live; a failing-then-passing test per code fix; before/after HTML mock-ups for visible changes; check the real effect where possible; update CLAUDE.md, README and HANDOVER in the same commits. Account, secret, hosting, history and live-data actions are listed for Robert, not done.",
+  "roadmap_id": null,
+  "milestone_ids": [],
+  "occurred_at": "2026-11-16T07:55:31Z",
+  "summary": "Code fixes for E1 to E19 are on the branch with tests (287 passed in CI run 43826921860) and mock-ups. Not merged. The live site stays frozen and several items are unproven until Robert merges, adds the deploy secrets and runs a dry run (HANDOVER R1 to R16).",
+  "evidence": [
+    {"kind": "commit", "ref": "488aab87160731486126309b8741a88f30437301", "result": "Branch head with all fixes; not merged to main"},
+    {"kind": "test", "ref": "https://github.com/RobertsMacros/cinema-checking-bot/actions/runs/43826921860", "result": "287 passed on Python 3.11, 3.12 and 3.13, browser tests included"}
+  ],
+  "remaining": ["Review and merge (R1)", "Deploy secrets and first deploy (R2)", "Dry run on real pages (R3)", "First scheduled digest on the new code (R4)", "Sold-out capture (R8)"],
+  "blockers": ["Merging, secrets, hosting and live runs are Robert's (HANDOVER R1 to R16)"]
+}
