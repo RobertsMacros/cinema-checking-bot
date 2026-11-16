@@ -46,6 +46,15 @@ class TestStaleSnapshot:
             assert "out of date" in text
             assert "Wed 07 Oct" in text
 
+    def test_snapshot_whose_showtimes_have_all_passed_says_so(self):
+        built = datetime(2026, 10, 7, 6, 25, tzinfo=LONDON)
+        now = datetime(2026, 11, 16, 9, 0, tzinfo=LONDON)
+        past = datetime(2026, 10, 9, 19, 0, tzinfo=LONDON)
+        with open_page(page_html(_payload(built, [_film(past)]), now)) as page:
+            text = page.locator("#content").inner_text()
+        assert "has already started" in text
+        assert "match your filters" not in text
+
     def test_fresh_snapshot_has_no_stale_warning(self):
         built = datetime(2026, 11, 16, 6, 0, tzinfo=LONDON)
         now = datetime(2026, 11, 16, 9, 0, tzinfo=LONDON)

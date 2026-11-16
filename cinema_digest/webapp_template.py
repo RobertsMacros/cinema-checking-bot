@@ -413,7 +413,11 @@ function render() {
     const live = upcoming(data.films);
     const films = live.filter(matches);
     if (films.length === 0) {
-      $("content").innerHTML = '<div class="state">No films match your filters.</div>';
+      // Say why the page is empty: old listings, not the visitor's filters
+      const why = live.length === 0 && (data.films || []).length > 0
+        ? "Every showtime in these listings has already started. Check the cinema's own website."
+        : "No films match your filters.";
+      $("content").innerHTML = `<div class="state">${why}</div>`;
     } else {
       $("content").innerHTML = '<div class="grid">' + films.map(cardHtml).join("") + '</div>';
     }
