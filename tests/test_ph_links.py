@@ -1,36 +1,44 @@
 """Film page links: keep the one read from the cinema's own page; only guess
-(by matching titles on the what's-on page) for films that have none."""
+(by matching titles against Picturehouse's film codes) for films that have none.
+
+These tests cover which films get a link and whether the codes are fetched,
+not the what's-on page parser, so the code lookup returns parsed codes.
+"""
 
 from datetime import datetime
-from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
-from cinema_digest.enrich import _enrich_ph_links
+from cinema_digest import enrich
 from cinema_digest.models import Film, Screening
+from cinema_digest.scraper import normalize_title
 
 LONDON = ZoneInfo("Europe/London")
 WHEN = datetime(2026, 11, 13, 19, 0, tzinfo=LONDON)
 DIRECT = "https://www.picturehouses.com/movie-details/004/HO00018878/fjord"
 
 
-def _session(html: str):
-    s = MagicMock()
-    s.get.return_value.status_code = 200
-    s.get.return_value.text = html
-    return s
+def _codes(monkeypatch, codes):
+    calls = []
+
+    def fetch(session):
+        calls.append(session)
+        return codes
+
+    monkeypatch.setattr(enrich, "_fetch_ph_film_codes", fetch)
+    return calls
 
 
-def test_links_from_the_cinema_page_are_kept_and_nothing_is_fetched():
+def test_links_from_the_cinema_page_are_kept_and_nothing_is_fetched(monkeypatch):
+    calls = _codes(monkeypatch, {normalize_title("Fjord"): ("HO00099999", "fjord")})
     film = Film(title="Fjord", ph_url=DIRECT, screenings=[Screening("Ritzy", WHEN, "u")])
-    session = _session('<a href="/movie-details/000/HO00099999/fjord">')
-    _enrich_ph_links([film], session)
+    enrich._enrich_ph_links([film], session=object())
     assert film.ph_url == DIRECT
-    session.get.assert_not_called()
+    assert calls == []
 
 
-def test_films_without_a_link_are_still_matched():
+def test_films_without_a_link_are_still_matched(monkeypatch):
+    calls = _codes(monkeypatch, {normalize_title("Only On Data Thistle"): ("HO00012345", "only-on-data-thistle")})
     film = Film(title="Only On Data Thistle", screenings=[Screening("Clapham", WHEN, "u")])
-    session = _session('<a href="/movie-details/000/HO00012345/only-on-data-thistle">')
-    _enrich_ph_links([film], session)
+    enrich._enrich_ph_links([film], session=object())
     assert film.ph_url == "https://www.picturehouses.com/movie-details/020/HO00012345/only-on-data-thistle"
-    session.get.assert_called_once()
+    assert len(calls) == 1
