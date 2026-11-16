@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "protocol": "coordination-verification/v1",
+  "repository": "RobertsMacros/cinema-checking-bot",
+  "task_id": "check:19",
+  "scope": "Check whether Robert still needs to do this: Approve extension page access and read-only Mail access. Inspect this repository's code, docs and history; do not change code for this request.",
+  "roadmap_id": null,
+  "milestone_ids": [],
+  "implementation_sha": "105f80043803b8737eabdcb1a5e1f0ca44c6abb0",
+  "remaining": [],
+  "blockers": [],
+  "criteria": [
+    {
+      "text": "Check whether Robert still needs to approve extension page access and read-only Mail access",
+      "status": "passed",
+      "evidence": "Not needed for this repository. Picturehouse pages are read by headless Chromium in GitHub Actions since 105f800 (cinema_digest/ph_scraper.py), so no browser extension page access is used. No code in the repository reads mail (searched all tracked files and history for extension, IMAP and mail-reading code: none). Checking a sent digest is covered by the run report artefact added on branch claude/dazzling-hopper-1h5hjl (commit 79d37850359db12d480aaa4bbcf58a45e9361bf8), not by reading the mailbox.",
+      "verification_scope": "source"
+    }
+  ]
+}
