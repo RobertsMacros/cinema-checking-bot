@@ -23,6 +23,7 @@ Pipeline: `scraper.scrape_all()` (Picturehouse pages through headless Chromium, 
 | Daily website deploy | `deploy_site.yml` builds in GitHub Actions, deploys with the Netlify CLI and checks the live `films.json`. It fails red without its secrets (the old `netlify_rebuild.yml` skipped and went green) |
 | Stale page warning | A static snapshot over 36 hours old shows a yellow "out of date" banner |
 | Incomplete listings | Fewer than 15 films at a cinema, or a fall back to Data Thistle, flags the subject "[CHECK: listings incomplete]" (it used to be a body note only, with a floor of 3) |
+| Provenance | Email, plain text and web footers name the sources actually used, credit OMDb and TMDB (TMDB's required notice) and say "Not affiliated with Picturehouse Cinemas." They used to say "Listings from Data Thistle" even after the switch |
 | Proof per digest run | Each run uploads a report (digest, Picturehouse pages, `listings_check.json`) and `run_check` turns the run red if a film on the pages is missing from the digest |
 | Tests | Run on every push (including `claude/**` branches), on PRs and weekly; browser tests of the page run in CI |
 

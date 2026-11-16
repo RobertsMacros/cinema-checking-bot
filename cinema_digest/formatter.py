@@ -21,6 +21,10 @@ PH_WHITE = "#ffffff"
 PH_LIGHT_GREY = "#f5f5f5"
 PH_MID_GREY = "#888888"
 
+# Pink text on the dark background, lighter than PH_PINK so small text has
+# at least 4.5:1 contrast (PH_PINK on DARK_BG is about 3.7:1)
+LINK_ON_DARK = "#ff6b93"
+
 # Dark theme colours
 DARK_BG = "#1a1a1a"
 DARK_CARD = "#222222"
@@ -62,6 +66,34 @@ LISTINGS_SUSPECT_NOTE = (
     "probably incomplete. See the notes below."
 )
 SCORES_INCOMPLETE_LABEL = "scores not fetched (time limit)"
+
+# Where listings can come from (ScrapeResult.sources), with a link for each
+LISTING_SOURCES = {
+    "Picturehouse": ("Picturehouse Cinemas", "https://www.picturehouses.com/"),
+    "Data Thistle": ("Data Thistle", "https://film.datathistle.com/"),
+}
+# Credits the score providers' terms ask for (TMDB requires this notice),
+# and a plain statement that this is not an official Picturehouse page.
+SCORE_CREDITS = (
+    "Scores from OMDb, TMDB, IMDb, Metacritic and Rotten Tomatoes. "
+    "This product uses the TMDB API but is not endorsed or certified by TMDB."
+)
+NOT_AFFILIATED = "Not affiliated with Picturehouse Cinemas."
+
+
+def _source_names(sources: list[str] | None) -> list[str]:
+    """Display names for this run's listing sources (both, if not recorded)."""
+    keys = [s for s in (sources or []) if s in LISTING_SOURCES] or list(LISTING_SOURCES)
+    return [LISTING_SOURCES[k][0] for k in keys]
+
+
+def _source_links_html(sources: list[str] | None) -> str:
+    keys = [s for s in (sources or []) if s in LISTING_SOURCES] or list(LISTING_SOURCES)
+    links = [
+        f'<a href="{url}" style="color:{LINK_ON_DARK};text-decoration:underline;">{_esc(name)}</a>'
+        for name, url in (LISTING_SOURCES[k] for k in keys)
+    ]
+    return " and ".join(links)
 
 
 def is_highlighted(scores: Scores | None) -> bool:
@@ -178,11 +210,13 @@ def format_digest(
     now: datetime | None = None,
     notes: list[str] | None = None,
     listings_suspect: bool = False,
+    sources: list[str] | None = None,
 ) -> str:
     """Format the complete plain-text digest body.
 
     notes are shown under the header (e.g. scraping problems);
-    listings_suspect adds a warning banner even when some films were found.
+    listings_suspect adds a warning banner even when some films were found;
+    sources (ScrapeResult.sources) are named in the footer.
     """
     if now is None:
         now = datetime.now(LONDON_TZ)
@@ -202,10 +236,15 @@ def format_digest(
     if notes:
         header += "Notes:\n" + "".join(f"* {n}\n" for n in notes) + "\n"
 
+    footer = (
+        "\n" + "-" * 50 + "\n"
+        f"Listings from: {' and '.join(_source_names(sources))}\n"
+        f"{SCORE_CREDITS}\n{NOT_AFFILIATED}\n"
+    )
     if not lines:
-        return header
+        return header + footer
 
-    return header + "\n".join(lines) + "\n"
+    return header + "\n".join(lines) + "\n" + footer
 
 
 # ---------------------------------------------------------------------------
@@ -449,6 +488,7 @@ def format_digest_html(
     now: datetime | None = None,
     notes: list[str] | None = None,
     listings_suspect: bool = False,
+    sources: list[str] | None = None,
 ) -> str:
     """Format the complete HTML email with Picturehouse branding."""
     if now is None:
@@ -503,7 +543,9 @@ def format_digest_html(
 <tr><td style="background:{DARK_BG};padding:20px;text-align:center;">
   <div style="color:{DARK_TEXT_DIM};font-size:11px;line-height:1.6;">
     Scores: {_score_icon(ICON_MC)}Metacritic &middot; {_score_icon(ICON_IMDB)}IMDb &middot; {_score_icon(ICON_RT)}Rotten Tomatoes{star_legend}<br>
-    Listings from <a href="https://film.datathistle.com/" style="color:{PH_PINK};text-decoration:none;">Data Thistle</a>
+    Listings from {_source_links_html(sources)}<br>
+    {_esc(SCORE_CREDITS)}<br>
+    {_esc(NOT_AFFILIATED)}
   </div>
 </td></tr>
 

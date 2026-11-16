@@ -110,7 +110,11 @@ def listings_check(scraped: ScrapeResult, digest: list[Film], now: datetime | No
 def write_report(
     directory: Path, scraped: ScrapeResult, digest: list[Film], body: str, html_body: str, subject: str
 ) -> None:
-    """Save what this run produced, so its output can be checked afterwards."""
+    """Save what this run produced, so its output can be checked afterwards.
+
+    Nothing private goes in: the listings are public and email addresses are
+    not included (the GitHub artefact is visible to anyone who can see the repo).
+    """
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "digest.txt").write_text(body, encoding="utf-8")
     (directory / "digest.html").write_text(html_body, encoding="utf-8")
@@ -209,8 +213,12 @@ def main() -> None:
     # 4. Format
     flag = subject_flag(filtered, scraped.listings_suspect)
 
-    body = format_digest(filtered, notes=notes, listings_suspect=scraped.listings_suspect)
-    html_body = format_digest_html(filtered, notes=notes, listings_suspect=scraped.listings_suspect)
+    body = format_digest(
+        filtered, notes=notes, listings_suspect=scraped.listings_suspect, sources=scraped.sources
+    )
+    html_body = format_digest_html(
+        filtered, notes=notes, listings_suspect=scraped.listings_suspect, sources=scraped.sources
+    )
 
     if args.report:
         try:

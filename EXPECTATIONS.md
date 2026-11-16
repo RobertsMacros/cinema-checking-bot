@@ -47,10 +47,17 @@
 - **Multipart**: sends both plain text and HTML versions
 - **Dry run mode**: print to stdout + write HTML preview to `digest_preview.html`
 - **Branded HTML**: Picturehouse brand colours, dark theme, responsive layout
+- **Provenance and credits**: the footer (email, plain text and web page) names the listing sources actually used this run (Picturehouse Cinemas, Data Thistle or both), credits the score sources, carries TMDB's required notice ("This product uses the TMDB API but is not endorsed or certified by TMDB") and says "Not affiliated with Picturehouse Cinemas."
 
 ## Per-Feature Expectations
 
-### Scraper: Data Thistle Parsing
+### Scraper: Picturehouse Pages (primary)
+- Each cinema page is opened in headless Chromium; "Show all dates" is pressed and the listings parsed once rendered
+- Day blocks carry the date in a class (`class_2026-11-14`); headings like "TODAY" are ignored
+- Special screenings listed as their own film ("Relaxed: …", "Dog-Friendly - …") fold into the main film as a screening type, even when the special title drops "The"
+- A page that yields no films counts as unreadable: that cinema falls back to Data Thistle and the subject is flagged
+
+### Scraper: Data Thistle Parsing (backup and extra detail)
 - h4 tags contain film titles as links
 - First ul after h4 (before any h5) contains metadata (year, country, duration, rating)
 - p tags contain logline/description

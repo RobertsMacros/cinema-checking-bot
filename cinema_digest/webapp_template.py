@@ -197,8 +197,10 @@ PAGE_HTML = r"""<!DOCTYPE html>
   </main>
 
   <footer>
-    Scores: Metacritic · IMDb · Rotten Tomatoes ·
-    Listings from <a href="https://film.datathistle.com/">Data Thistle</a><br>
+    Listings from <span id="sources"><a href="https://www.picturehouses.com/">Picturehouse Cinemas</a> and <a href="https://film.datathistle.com/">Data Thistle</a></span><br>
+    Scores from OMDb, TMDB, IMDb, Metacritic and Rotten Tomatoes.
+    This product uses the TMDB API but is not endorsed or certified by TMDB.<br>
+    Not affiliated with Picturehouse Cinemas.<br>
     ⭐ = Metacritic ≥ 76 or IMDb ≥ 7.7
   </footer>
 
@@ -377,9 +379,21 @@ function renderStale(data) {
   $("stale").hidden = false;
 }
 
+// Name only the sources this snapshot actually used (both, if not recorded).
+const SOURCE_LINKS = {
+  "Picturehouse": '<a href="https://www.picturehouses.com/">Picturehouse Cinemas</a>',
+  "Data Thistle": '<a href="https://film.datathistle.com/">Data Thistle</a>',
+};
+
+function renderSources(data) {
+  const used = (data.sources || []).filter((s) => s in SOURCE_LINKS);
+  if (used.length) $("sources").innerHTML = used.map((s) => SOURCE_LINKS[s]).join(" and ");
+}
+
 function render() {
   const data = state.data;
   if (!data) return;
+  renderSources(data);
   renderStale(data);
   renderBanner(data);
   if (data.error && (!data.films || data.films.length === 0)) {

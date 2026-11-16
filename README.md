@@ -6,7 +6,7 @@ Automatically fetches upcoming film listings from Clapham Picturehouse and Ritzy
 
 ## What it does
 
-1. Scrapes film listings from [Data Thistle](https://film.datathistle.com/) for both cinemas
+1. Reads each cinema's own [Picturehouse](https://www.picturehouses.com/) page in headless Chromium (the showtimes only appear once the page's script has run), then adds anything extra from [Data Thistle](https://film.datathistle.com/), which is also the backup if a Picturehouse page can't be read
 2. Filters showtimes to evenings (weekdays 18:00-21:30, weekends 11:00-21:30)
 3. Enriches each film with Metacritic, IMDb, and Rotten Tomatoes scores via [OMDb API](https://www.omdbapi.com/)
 4. Formats a digest ordered by Metacritic score (highest first; unscored films last, alphabetically)
@@ -366,22 +366,30 @@ The Book link goes to the booking page for the film's earliest qualifying screen
 
 ```
 cinema_digest/
-  config.py      - Environment variable loading
-  models.py      - Film, Screening, Scores dataclasses
-  scraper.py     - Data Thistle HTML parsing
-  filters.py     - Showtime filtering (time windows, date range)
-  enrich.py      - OMDb API score enrichment with caching
-  formatter.py   - Markdown digest formatting
-  emailer.py     - SMTP email sending
-  main.py        - Orchestration entry point
+  config.py           - Environment variable loading, cinemas, thresholds
+  models.py           - Film, Screening, Scores, ScrapeResult dataclasses
+  ph_scraper.py       - Picturehouse cinema pages (headless Chromium) and parsing
+  scraper.py          - Data Thistle parsing; combines both sources (scrape_all)
+  filters.py          - Showtime filtering (time windows, date range)
+  considering.py      - What's On's Wait and see list (considering.json)
+  enrich.py           - Score enrichment (OMDb, TMDB, IMDb, Metacritic, RT) with caching
+  formatter.py        - Plain-text and HTML digest formatting
+  emailer.py          - SMTP email sending
+  main.py             - Orchestration entry point; --report run report
+  run_check.py        - Fails a run whose digest doesn't match the Picturehouse pages
+  webapp.py           - Flask app and the payload behind the web page
+  webapp_template.py  - The single-page web UI
+  site_check.py       - Checks the live site is fresh and complete
+build_static.py       - Builds the static site in public/
 ```
 
 ## Limitations
 
-- Data Thistle is a third-party scraping source. If they change their HTML structure, the scraper will need updating. The digest is still sent, with a warning at the top and a flagged subject, when a listings page can't be fetched, when films are found but no showtimes can be read, or when nothing qualifies for the next 7 days. An unusually low film count (fewer than 3 at a cinema) is noted in the digest.
-- OMDb free tier is limited to 1000 API calls/day (more than enough for ~25 films).
-- OMDb does not always have scores for new or niche releases. These show as N/A.
-- The script does not detect sold-out or struck-through sessions (Data Thistle does not reliably expose this).
+- Both listings sources are scraped web pages. If Picturehouse or Data Thistle change their markup, the parsers need updating. The digest is still sent, with a warning at the top and a flagged subject, when a listings page can't be fetched or read, when films are found but no showtimes can be read, when a cinema has fewer than 15 films, or when nothing qualifies for the next 7 days.
+- OMDb free tier is limited to 1000 API calls/day (enough for a normal week's 20 to 40 qualifying films).
+- OMDb does not always have scores for new or niche releases, or for events and stage screenings. These show as N/A.
+- Sold-out sessions are still listed: the Picturehouse page markup for a sold-out session hasn't been captured yet (see HANDOVER).
+- The email and page credit their sources and say they are not affiliated with Picturehouse Cinemas.
 
 ## Possible improvements
 

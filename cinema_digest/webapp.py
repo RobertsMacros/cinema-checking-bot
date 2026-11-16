@@ -73,6 +73,7 @@ class _Cache:
         self.films: list[Film] | None = None
         self.notes: list[str] = []
         self.listings_suspect: bool = False
+        self.sources: list[str] = []  # where the cached listings came from
         self.fetched_at: datetime | None = None  # London time, for display
         self.error: str | None = None
         # time.monotonic() values: wall-clock London times jump at DST changes
@@ -85,8 +86,8 @@ class _Cache:
 _cache = _Cache()
 
 
-def build_digest(config: Config | None = None) -> tuple[list[Film], list[str], bool]:
-    """Run the full pipeline; return (films, notes, listings_suspect).
+def build_digest(config: Config | None = None) -> tuple[list[Film], list[str], bool, list[str]]:
+    """Run the full pipeline; return (films, notes, listings_suspect, sources).
 
     Mirrors main.main(): scraping problems become notes rather than errors.
     Isolated so tests can monkeypatch it without touching the network.
@@ -117,7 +118,7 @@ def build_digest(config: Config | None = None) -> tuple[list[Film], list[str], b
             time_budget=max(0.0, remaining),
         ) or []
         notes.extend(enrichment_notes(filtered, omdb_problems))
-    return filtered, notes, scraped.listings_suspect
+    return filtered, notes, scraped.listings_suspect, list(scraped.sources)
 
 
 def _is_fresh(now: float) -> bool:
@@ -171,7 +172,9 @@ def get_films(force_refresh: bool = False) -> _Cache:
         if _is_fresh(now) and not force_refresh:
             return _cache
         try:
-            films, notes, suspect = build_digest()
+            # (Tests may stub build_digest with the older three-item result.)
+            films, notes, suspect, *rest = build_digest()
+            sources = rest[0] if rest else []
             # Two busy cinemas never have an empty week, so no films means a
             # failed fetch or a page change; suspect means a cinema failed;
             # a configured cinema with no films means its page parsed to
@@ -204,6 +207,7 @@ def get_films(force_refresh: bool = False) -> _Cache:
                 _cache.films = films
                 _cache.notes = notes
                 _cache.listings_suspect = suspect or bool(missing)
+                _cache.sources = sources
                 _cache.fetched_at = datetime.now(LONDON_TZ)
                 _cache.fetched_mono = time.monotonic()
                 _cache.error = None
@@ -301,6 +305,7 @@ def build_payload(force_refresh: bool = False) -> dict:
         "warning": digest_warning(films, cache.listings_suspect) if fetched_at else None,
         "notes": list(cache.notes),
         "error": cache.error,
+        "sources": list(cache.sources),
     }
 
 
