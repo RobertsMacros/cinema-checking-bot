@@ -19,15 +19,27 @@ FIXTURE = (Path(__file__).parent / "fixtures" / "ph_clapham.html").read_text()
 NOW = datetime(2026, 11, 13, 12, 0, tzinfo=LONDON)
 
 
-def _dt_page(n_films: int) -> str:
-    # shortcut: hand-written in the shape of test_scraper.SAMPLE_HTML, because this
-    # session could not fetch Data Thistle. Replace with the saved pages from a run
-    # report (datathistle-<cinema>.html) once one is downloaded (HANDOVER F6).
-    times = '<h5>Fri 13 Nov</h5><div><ul><li><a href="https://web.picturehouses.com/order/showtimes/020-1/seats">19:00</a></li></ul></div>'
-    return "".join(
-        f'<h4><a href="/listing/{i}-f/">DT Film {i}</a></h4><div><ul><li>2026</li></ul></div>{times}'
-        for i in range(n_films)
-    )
+def _dt_films(n: int, cinema: str, title: str = "DT Film") -> list[Film]:
+    """Data Thistle films as the parser returns them.
+
+    These tests check how scrape_all flags and credits a week, not the Data
+    Thistle parser, so they hand it parsed films instead of feeding made-up
+    markup through the parser. (The parser's own tests still use hand-written
+    HTML until saved pages replace it: HANDOVER F6.)
+    """
+    when = datetime(2026, 11, 13, 19, 0, tzinfo=LONDON)
+    return [Film(title=f"{title} {i}", year=2026, screenings=[Screening(cinema, when, "u")]) for i in range(n)]
+
+
+def _scrape(monkeypatch, dt_by_cinema: dict, ph_fetcher):
+    monkeypatch.setattr("cinema_digest.scraper.parse_cinema",
+                        lambda html, cinema, today=None: list(dt_by_cinema.get(cinema, [])))
+    return scrape_all(_session("<html>dt page</html>", "<html>dt page</html>"),
+                      today=date(2026, 11, 13), ph_fetcher=ph_fetcher)
+
+
+def _ph_pages(urls):
+    return {n: FIXTURE for n in urls}
 
 
 def _session(*pages):
@@ -47,48 +59,48 @@ def _broken(urls):
 
 
 class TestFallbackAndLowCountsAreFlagged:
-    def test_partly_loaded_picturehouse_page_flags_the_subject(self):
+    def test_partly_loaded_picturehouse_page_flags_the_subject(self, monkeypatch):
         # The saved page has 6 films; Data Thistle adds 12 more, so the combined
         # count clears the floor, but a real page lists 60 or more: it didn't load
-        result = scrape_all(_session(_dt_page(12), _dt_page(12)), today=date(2026, 11, 13),
-                            ph_fetcher=lambda urls: {n: FIXTURE for n in urls})
+        dt = {c: _dt_films(12, c) for c in ("Clapham", "Ritzy")}
+        result = _scrape(monkeypatch, dt, _ph_pages)
         assert len([f for f in result.films if any(s.cinema == "Clapham" for s in f.screenings)]) >= MIN_FILMS_PER_CINEMA
         assert result.listings_suspect is True
         assert any("Picturehouse page showed only 6 films" in w for w in result.warnings)
 
-    def test_picturehouse_unreadable_flags_the_subject(self):
-        result = scrape_all(_session(_dt_page(20), _dt_page(20)), today=date(2026, 11, 13), ph_fetcher=_broken)
+    def test_picturehouse_unreadable_flags_the_subject(self, monkeypatch):
+        dt = {c: _dt_films(20, c) for c in ("Clapham", "Ritzy")}
+        result = _scrape(monkeypatch, dt, _broken)
         assert result.listings_suspect is True
         assert main_module.subject_flag(result.films, result.listings_suspect) == main_module.SUBJECT_FLAG_INCOMPLETE
 
-    def test_too_few_films_flags_the_subject(self):
-        result = scrape_all(_session(_dt_page(4), _dt_page(20)), today=date(2026, 11, 13), ph_fetcher=None)
+    def test_too_few_films_flags_the_subject(self, monkeypatch):
+        dt = {"Clapham": _dt_films(4, "Clapham"), "Ritzy": _dt_films(20, "Ritzy", "Ritzy Film")}
+        result = _scrape(monkeypatch, dt, None)
         assert result.listings_suspect is True
         assert any("unusually low" in w and "Clapham" in w for w in result.warnings)
 
-    def test_sources_record_what_was_used(self):
-        ok = scrape_all(_session("<html></html>", "<html></html>"), today=date(2026, 11, 13),
-                        ph_fetcher=lambda urls: {n: FIXTURE for n in urls})
+    def test_sources_record_what_was_used(self, monkeypatch):
+        ok = _scrape(monkeypatch, {}, _ph_pages)
         assert ok.sources == ["Picturehouse"]
         assert set(ok.pages) == {"Clapham", "Ritzy"}
-        fallback = scrape_all(_session(_dt_page(20), _dt_page(20)), today=date(2026, 11, 13), ph_fetcher=_broken)
+        fallback = _scrape(monkeypatch, {c: _dt_films(20, c) for c in ("Clapham", "Ritzy")}, _broken)
         assert fallback.sources == ["Data Thistle"]
 
-    def test_data_thistle_is_credited_when_it_only_adds_details(self):
+    def test_data_thistle_is_credited_when_it_only_adds_details(self, monkeypatch):
         # Picturehouse pages have no year or description; Data Thistle's copy of
         # the same film supplies them, so it must be named as a source
-        dt = ('<h4><a href="/listing/1-f/">Wild Horse Nine</a></h4><div><ul><li>2026</li></ul></div>'
-              '<p>A story about horses.</p>')
-        result = scrape_all(_session(dt, "<html></html>"), today=date(2026, 11, 13),
-                            ph_fetcher=lambda urls: {n: FIXTURE for n in urls})
+        same_showing = datetime(2026, 11, 13, 20, 30, tzinfo=LONDON)
+        dt = {"Clapham": [Film(title="Wild Horse Nine", year=2026, logline="A story about horses.",
+                               screenings=[Screening("Clapham", same_showing, "u")])]}
+        result = _scrape(monkeypatch, dt, _ph_pages)
         film = next(f for f in result.films if f.title == "Wild Horse Nine")
         assert film.year == 2026
         assert result.sources == ["Picturehouse", "Data Thistle"]
 
-    def test_data_thistle_pages_are_kept_for_the_run_report(self):
-        result = scrape_all(_session(_dt_page(20), _dt_page(20)), today=date(2026, 11, 13), ph_fetcher=None)
-        assert set(result.dt_pages) == {"Clapham", "Ritzy"}
-        assert "DT Film 0" in result.dt_pages["Clapham"]
+    def test_data_thistle_pages_are_kept_for_the_run_report(self, monkeypatch):
+        result = _scrape(monkeypatch, {c: _dt_films(20, c) for c in ("Clapham", "Ritzy")}, None)
+        assert result.dt_pages == {"Clapham": "<html>dt page</html>", "Ritzy": "<html>dt page</html>"}
 
     def test_subject_flags(self):
         film = Film(title="A", screenings=[Screening("Ritzy", NOW, "u")])
