@@ -45,6 +45,7 @@
 - **Subject flag**: "[CHECK: listings page may have changed]" when no screenings qualify; "[CHECK: listings incomplete]" when a cinema couldn't be fetched, had no readable showtimes, had fewer than 15 films, or fell back to Data Thistle only
 - **Sent once**: the configured port is used first (465 = implicit TLS, otherwise STARTTLS); the other method is tried only if the first fails before the message is handed over. Server certificates are verified
 - **Multipart**: sends both plain text and HTML versions
+- **Nothing private in logs**: the Actions log is public, so API keys and email addresses are masked in every log line and traceback, and recipients are shown only as a count
 - **Dry run mode**: print to stdout + write HTML preview to `digest_preview.html`
 - **Branded HTML**: Picturehouse brand colours, dark theme, responsive layout
 - **Accessible**: `lang="en-GB"`; all text at least 4.5:1 contrast on its background (Picturehouse pink is used for fills and borders; pink text uses a lighter shade); no em dashes in headings or copy. On the web page the search box has a label, the cinema filter is a named group whose buttons report `aria-pressed`, keyboard focus stays on the chosen button, and the highlight star has a spoken label

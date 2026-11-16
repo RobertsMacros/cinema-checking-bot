@@ -32,9 +32,14 @@ SUBJECT_FLAG_INCOMPLETE = "CHECK: listings incomplete"
 _SECRET_PARAM = re.compile(r"((?:api_?key|apikey|token|password)=)[^&\s'\"]+", re.IGNORECASE)
 
 
+# Email addresses: GitHub masks the whole EMAIL_TO secret but not single
+# addresses, which SMTP errors (e.g. SMTPRecipientsRefused) put in tracebacks
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+
+
 def redact(text: str) -> str:
-    """Hide API keys and similar values in URLs (e.g. ?apikey=...)."""
-    return _SECRET_PARAM.sub(r"\1***", text)
+    """Hide API keys in URLs (e.g. ?apikey=...) and email addresses."""
+    return _EMAIL.sub("***@***", _SECRET_PARAM.sub(r"\1***", text))
 
 
 class RedactingFilter(logging.Filter):
