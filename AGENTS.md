@@ -20,7 +20,11 @@ leave it to that actor. Do not silently re-claim completed or cancelled work.
 Before changing code, run `.coordination/report.py start` with the exact task UUID,
 a unique actor UUID for this chat/run, title and scope. Start only after it exits
 successfully and confirms the claim on GitHub. Another active actor means wait;
-never duplicate, steal or silently expire a claim. Preserve IDs through handover.
+never duplicate or steal a claim. A working claim with no report for 14 days has
+expired: take it over by starting the same task UUID with its exact title and
+scope, and the reporter records whose claim expired. Blocked claims never expire.
+If the reporter says it is outdated, run the update command it prints first.
+Preserve IDs through handover.
 
 Use the reporter for substantive progress, blockers and outcomes, including local
 and unpushed work. Report at take-on, material changes, before handover/ending and
@@ -31,7 +35,10 @@ Agent review, testing and ordinary implementation are agent work.
 Publishing sanitised coordination metadata to the private coordination repository
 is authorised separately from publishing project code. Never push implementation,
 secrets, personal/case/financial/medical data or private local paths through this
-reporting rule. Done assertions require exact-scope evidence; commit, delivery and
-process exit alone do not prove completion. Read the reporter receipt; on failure,
-retain the local breadcrumb and report publication uncertainty. Never claim sync.
+reporting rule; the reporter also removes them as a safety net. Report done only
+when the work is on GitHub: `--commit` with a pushed commit, or `--no-code` with
+what shows it is finished when no code changed. Local-only work stays working.
+Done assertions require exact-scope evidence; commit, delivery and process exit
+alone do not prove completion. Read the reporter receipt; on failure, retain the
+local breadcrumb and report publication uncertainty. Never claim sync.
 <!-- project-coordination:reporting-v2:end -->

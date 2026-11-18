@@ -80,7 +80,11 @@ leave it to that actor. Do not silently re-claim completed or cancelled work.
 Before changing code, run `.coordination/report.py start` with the exact task UUID,
 a unique actor UUID for this chat/run, title and scope. Start only after it exits
 successfully and confirms the claim on GitHub. Another active actor means wait;
-never duplicate, steal or silently expire a claim. Preserve IDs through handover.
+never duplicate or steal a claim. A working claim with no report for 14 days has
+expired: take it over by starting the same task UUID with its exact title and
+scope, and the reporter records whose claim expired. Blocked claims never expire.
+If the reporter says it is outdated, run the update command it prints first.
+Preserve IDs through handover.
 
 Use the reporter for substantive progress, blockers and outcomes, including local
 and unpushed work. Report at take-on, material changes, before handover/ending and
@@ -91,9 +95,12 @@ Agent review, testing and ordinary implementation are agent work.
 Publishing sanitised coordination metadata to the private coordination repository
 is authorised separately from publishing project code. Never push implementation,
 secrets, personal/case/financial/medical data or private local paths through this
-reporting rule. Done assertions require exact-scope evidence; commit, delivery and
-process exit alone do not prove completion. Read the reporter receipt; on failure,
-retain the local breadcrumb and report publication uncertainty. Never claim sync.
+reporting rule; the reporter also removes them as a safety net. Report done only
+when the work is on GitHub: `--commit` with a pushed commit, or `--no-code` with
+what shows it is finished when no code changed. Local-only work stays working.
+Done assertions require exact-scope evidence; commit, delivery and process exit
+alone do not prove completion. Read the reporter receipt; on failure, retain the
+local breadcrumb and report publication uncertainty. Never claim sync.
 
 ## Reporter commands
 
@@ -127,9 +134,16 @@ actor UUIDs. Read a previous claim before reusing a task UUID.
 python3 .coordination/report.py start --task TASK_UUID --actor ACTOR_UUID --title 'Exact step' --scope 'Exact authorised scope'
 python3 .coordination/report.py update --task TASK_UUID --actor ACTOR_UUID --status working --summary 'Substantive progress' --remaining 'Exact remaining work'
 python3 .coordination/report.py update --task TASK_UUID --actor ACTOR_UUID --status blocked --summary 'Account connection awaits approval' --needs-user 'Approve the account connection' --category approval --why 'The account owner must grant access'
+python3 .coordination/report.py report-template --task TASK_UUID --commit FULL_SHA > .coordination/reports/REPORT_UUID.json
 python3 .coordination/report.py update --task TASK_UUID --actor ACTOR_UUID --status done --summary 'Exact scope finished' --commit FULL_SHA --report .coordination/reports/REPORT_UUID.json
+python3 .coordination/report.py update --task TASK_UUID --actor ACTOR_UUID --status done --summary 'Checked; nothing to change' --no-code 'What shows it is finished'
 python3 .coordination/report.py retry --event EVENT_UUID --actor ACTOR_UUID
 ```
+
+`report-template` prints the verification report for the task's captured criteria,
+in order, in the exact shape the dashboard checks. Fill in each criterion's
+`evidence` and `verification_scope`, set `status` to `passed` only when it did,
+commit and push the file, then report done naming it.
 
 Use `--roadmap ID --milestone ID` and repeat `--criterion` when supplied on start;
 these mappings and criteria are captured in the shared claim. Updates retain them.
@@ -140,7 +154,9 @@ Keep actions and reasons short. Clear user input by reporting working with no
 awaiting evidence until a supported exact-scope report is checked. `cancelled`
 releases an intentionally abandoned claim. Do not release another actor's claim.
 To resume a released task, start with `--reopen` and the unchanged captured scope.
-Use a new task UUID for different scope. Claims do not expire automatically.
+Use a new task UUID for different scope. A working claim expires after 14 days
+with no report; another actor may then take it over with `start` (same task UUID,
+title and scope), and the new event records the expired actor and idle days.
 
 A successful start/update returns JSON with `published: true`, the task and actor
 IDs and event ID after both shared claim and immutable event are read back. A
