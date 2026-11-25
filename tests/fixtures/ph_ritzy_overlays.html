@@ -1,0 +1,42 @@
+<!-- Overlay markup from the Ritzy Picturehouse page, 25 Nov 2026: the "Show All
+Dates" button, the Premiere Points marketing banner (#popupbanner) and the
+OneTrust cookie banner, as named in the failed GitHub run 45581796060, where
+both covered the button. Styled here as they rendered on that run: the banner
+on top of the page and the cookie banner arriving after the page loaded.
+LISTINGS_GO_HERE is replaced by the test with the saved Clapham listings. -->
+<html><body class="body">
+<div id="popupbanner" class="cookiesTop_div marketing_banner"
+     style="position:fixed;top:0;left:0;width:100%;height:100%;z-index:999;background:#fff">
+  <div class="container-fluid">
+    <input id="popupbannerid" class="form-control" type="hidden">
+    <div class="row"><div class="col-lg-10 offset-lg-1">
+      <p><em><span>Earn exclusive perks and five-star rewards now with Premiere Points!</span></em>
+      <span><a href="#">here</a></span></p>
+      <div id="popupbanner-close" class="cookiesClose"
+           onclick="document.getElementById('popupbanner').style.display='none'">x</div>
+    </div></div>
+  </div>
+</div>
+<div class="date_box">
+  <a href="javascript:void(0)" onclick="return loadMovies('2027-01-25',false, true)"
+     id="show_all_dates_btn" class="show_all_btn active"><span>Show All Dates</span></a>
+</div>
+<div id="listings"></div>
+<script>
+  function loadMovies() {
+    document.getElementById('listings').innerHTML = document.getElementById('saved').innerHTML;
+    return false;
+  }
+  setTimeout(function () {
+    var sdk = document.createElement('div');
+    sdk.id = 'onetrust-consent-sdk';
+    sdk.setAttribute('data-nosnippet', 'true');
+    sdk.style.cssText = 'position:fixed;inset:0;z-index:2147483645;background:rgba(0,0,0,.5)';
+    sdk.innerHTML = '<div id="onetrust-banner-sdk"><button id="onetrust-reject-all-handler">Reject All</button>'
+      + '<button id="onetrust-accept-btn-handler">Accept All Cookies</button></div>';
+    sdk.querySelector('#onetrust-reject-all-handler').onclick = function () { sdk.remove(); };
+    document.body.appendChild(sdk);
+  }, 500);
+</script>
+<template id="saved">LISTINGS_GO_HERE</template>
+</body></html>

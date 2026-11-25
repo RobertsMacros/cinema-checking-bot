@@ -55,6 +55,7 @@
 
 ### Scraper: Picturehouse Pages (primary)
 - Each cinema page is opened in headless Chromium; "Show all dates" is pressed and the listings parsed once rendered
+- Before pressing it, non-essential cookies are declined ("Reject All", waiting up to 5 seconds for the late cookie banner), the Premiere Points banner is closed and both banners are hidden; if something still covers the button, its click handler is fired directly
 - Day blocks carry the date in a class (`class_2026-11-14`); headings like "TODAY" are ignored
 - Special screenings listed as their own film ("Relaxed: …", "Dog-Friendly - …") fold into the main film as a screening type, even when the special title drops "The"
 - A page that yields no films counts as unreadable: that cinema falls back to Data Thistle and the subject is flagged
