@@ -19,7 +19,7 @@ Pipeline: `scraper.scrape_all()` (Picturehouse pages through headless Chromium, 
 | Area | State |
 |---|---|
 | Listings source | Picturehouse cinema pages since 13 Nov (`105f800`), Data Thistle fills gaps and is the fallback |
-| Live website | **Still the 7 Oct manual upload.** It stays frozen until the deploy secrets (R1) are added. Until then the daily "Deploy website" run fails red, by design |
+| Live website | Deployed daily by `deploy_site.yml` since 25 Nov 2026, when the deploy secrets (R1) were added. The first deploys ran red only because the Ritzy page could not be read (cookie and marketing banners covered "Show all dates"); fixed on 25 Nov |
 | Daily website deploy | `deploy_site.yml` builds in GitHub Actions, deploys with the Netlify CLI and checks the live `films.json`. It fails red without its secrets (the old `netlify_rebuild.yml` skipped and went green) |
 | Stale page warning | A static snapshot over 36 hours old shows a yellow "out of date" banner; when every showtime in it has passed, the page says so instead of "No films match your filters" |
 | Incomplete listings | Fewer than 15 films at a cinema, or a fall back to Data Thistle, flags the subject "[CHECK: listings incomplete]" (it used to be a body note only, with a floor of 3) |
@@ -37,7 +37,7 @@ Only what needs your accounts, secrets, settings or Mac. Everything else from th
 
 | # | What | Exact steps |
 |---|---|---|
-| R1 | Turn on the daily website deploy (the live site is still the 7 Oct upload) | 1. Netlify → User settings → Applications → Personal access tokens → New access token; copy it. 2. Netlify → `clapham-ritzy-cinema` → Project configuration → General → Project details → copy Project ID. 3. GitHub → this repo → Settings → Secrets and variables → Actions → New repository secret: `NETLIFY_AUTH_TOKEN` (the token) and `NETLIFY_SITE_ID` (the ID). 4. Actions → Deploy website → Run workflow on `main`. 5. The run should be green and its last step print `OK: <n> films`. 6. Open the site: "Updated" should show today. While you are in Secrets, delete `NETLIFY_BUILD_HOOK` if it is listed (nothing uses it now) |
+| R1 | Done 25 Nov 2026: `NETLIFY_AUTH_TOKEN` and `NETLIFY_SITE_ID` added; deploys publish. Delete `NETLIFY_BUILD_HOOK` from Secrets if it is still listed |
 | R2 | Add the TMDB key | Free key at themoviedb.org → Settings → API. GitHub → Settings → Secrets and variables → Actions → New repository secret `TMDB_API_KEY`. The next digest run's report should show `tmdb_key_set: true` |
 | R3 | Let What's On feed the Wait and see list | `considering.json` has been `[]` since 28 Sep. What's On's Populate task (`docs/populate-task.md` step f2 in the whats-on repo) is meant to clone this repo, write the file and push to `main`, but nothing has ever arrived, most likely because the session that runs it can't push here. In the Claude task or environment that runs Populate, add `RobertsMacros/cinema-checking-bot` with push access. If you also do R4, that push to `main` will be refused: either let Populate open a PR instead (a change in whats-on) or give it a bypass in the ruleset |
 | R4 | Protect `main` | GitHub → Settings → Rules → Rulesets → New branch ruleset for `main`: require a pull request, require the three `test` status checks, block force pushes. 23 of the 45 commits on `main` before this work were pushed directly. Mind the Populate push in R3 |

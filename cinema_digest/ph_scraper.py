@@ -195,13 +195,7 @@ def fetch_ph_pages(urls: dict[str, str]) -> dict[str, str]:
                     page = context.new_page()
                     try:
                         page.goto(url, wait_until="domcontentloaded", timeout=_PAGE_TIMEOUT_MS)
-                        _dismiss_cookie_banner(page)
-                        # The listings only load once "Show all dates" is pressed
-                        page.locator("#show_all_dates_btn").first.click(timeout=15_000)
-                        page.wait_for_selector(_LISTING_SELECTOR, timeout=_LISTINGS_TIMEOUT_MS)
-                        # Let late day blocks finish rendering
-                        page.wait_for_timeout(2_000)
-                        pages[cinema_name] = page.content()
+                        pages[cinema_name] = read_listings_page(page)
                     except PlaywrightError as e:
                         logger.error("Could not read the %s Picturehouse page: %s", cinema_name, e)
                     finally:
@@ -211,6 +205,47 @@ def fetch_ph_pages(urls: dict[str, str]) -> dict[str, str]:
     except PlaywrightError as e:
         raise PicturehouseUnavailable(f"Browser failed: {e}") from e
     return pages
+
+
+def read_listings_page(page, click_timeout_ms: int = 15_000) -> str:
+    """Show every date on a loaded Picturehouse cinema page and return its HTML."""
+    _clear_overlays(page)
+    # The listings only load once "Show all dates" is pressed
+    button = page.locator("#show_all_dates_btn").first
+    try:
+        button.click(timeout=click_timeout_ms)
+    except Exception:
+        # Something still covers the button: fire its own click handler instead
+        logger.warning("Show all dates was covered on the page; pressing it directly")
+        button.dispatch_event("click")
+    page.wait_for_selector(_LISTING_SELECTOR, timeout=_LISTINGS_TIMEOUT_MS)
+    # Let late day blocks finish rendering
+    page.wait_for_timeout(2_000)
+    return page.content()
+
+
+# Banners seen in front of "Show all dates" (GitHub run 45581796060, 25 Nov 2026)
+_OVERLAYS = ("#onetrust-consent-sdk", "#popupbanner")
+
+
+def _clear_overlays(page) -> None:
+    """Decline cookies, close the marketing banner and hide anything left over.
+
+    The cookie banner can arrive a moment after the page loads, so wait briefly
+    for it before declining.
+    """
+    try:
+        page.wait_for_selector("#onetrust-reject-all-handler", state="visible", timeout=5_000)
+    except Exception:
+        pass
+    _dismiss_cookie_banner(page)
+    try:
+        close = page.locator("#popupbanner-close")
+        if close.count() and close.first.is_visible():
+            close.first.click(timeout=2_000)
+    except Exception:
+        pass
+    page.add_style_tag(content=", ".join(_OVERLAYS) + " { display: none !important; }")
 
 
 def _dismiss_cookie_banner(page) -> None:
